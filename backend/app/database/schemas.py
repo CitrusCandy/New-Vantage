@@ -10,13 +10,13 @@ class TopicBase(BaseModel):
 
 
 class TopicCreate(BaseModel):
-    title: str = Field(..., description="Topic title or search query")
-    slug: Optional[str] = Field(default=None, description="Optional custom URL slug")
+    title: str = Field(..., min_length=1, max_length=300, description="Topic title or search query")
+    slug: Optional[str] = Field(default=None, max_length=150, description="Optional custom URL slug")
     source_coverage: Optional[Dict[str, Any]] = Field(default=None, description="Initial source coverage dictionary")
 
 
 class TopicUpdate(BaseModel):
-    title: Optional[str] = Field(default=None, description="Updated topic title")
+    title: Optional[str] = Field(default=None, min_length=1, max_length=300, description="Updated topic title")
     source_coverage: Optional[Dict[str, Any]] = Field(default=None, description="Updated source coverage dictionary")
 
 

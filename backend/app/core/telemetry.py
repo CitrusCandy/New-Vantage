@@ -161,6 +161,17 @@ class OpsMetricsRegistry:
             "openai": SourceHealthStatus(source_name="openai", enabled=True),
         }
 
+    def reset(self):
+        """Reset in-memory metric collections (for testing and isolation)."""
+        with self._lock:
+            self.recent_runs.clear()
+            self.source_health = {
+                "google_news": SourceHealthStatus(source_name="google_news", enabled=True),
+                "reddit": SourceHealthStatus(source_name="reddit", enabled=True),
+                "x": SourceHealthStatus(source_name="x", enabled=True),
+                "openai": SourceHealthStatus(source_name="openai", enabled=True),
+            }
+
     def record_pipeline_run(
         self,
         pipeline_name: str,

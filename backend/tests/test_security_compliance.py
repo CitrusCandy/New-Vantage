@@ -481,3 +481,82 @@ class TestInputValidation(unittest.TestCase):
         self.assertEqual(sanitize_search_query("100% discount"), "100\\% discount")
         self.assertEqual(sanitize_search_query("test_variable"), "test\\_variable")
         self.assertEqual(sanitize_search_query(""), "")
+
+
+# ==========================================
+# 9. Extended Security & Reliability Regression Tests
+# ==========================================
+
+class TestExtendedSecurityRemediations(unittest.TestCase):
+    def test_ipv4_mapped_ipv6_ssrf_blocked(self):
+        # IPv4-mapped IPv6 loopback
+        self.assertTrue(is_private_or_forbidden_ip(ipaddress.ip_address("::ffff:127.0.0.1")))
+        self.assertFalse(is_safe_url("http://[::ffff:127.0.0.1]/status"))
+        
+        # IPv4-mapped IPv6 cloud metadata
+        self.assertTrue(is_private_or_forbidden_ip(ipaddress.ip_address("::ffff:169.254.169.254")))
+        self.assertFalse(is_safe_url("http://[::ffff:169.254.169.254]/latest/meta-data"))
+        
+        # IPv4-mapped IPv6 private RFC1918
+        self.assertTrue(is_private_or_forbidden_ip(ipaddress.ip_address("::ffff:10.0.0.1")))
+        self.assertTrue(is_private_or_forbidden_ip(ipaddress.ip_address("::ffff:192.168.1.1")))
+
+    def test_production_rejects_query_param_auth(self):
+        from app.core.security import extract_token_from_request
+        from starlette.requests import Request
+        
+        # Mock request with ?api_key=...
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/ops/stats",
+            "headers": [],
+            "query_string": b"api_key=test_ops_key",
+        }
+        req = Request(scope)
+        
+        with patch.dict(os.environ, {
+            "ENVIRONMENT": "production",
+            "OPS_API_KEY": "test_ops_key",
+        }):
+            token, source = extract_token_from_request(req)
+            # In production, query parameter api_key must NOT be extracted
+            self.assertIsNone(token)
+            self.assertEqual(source, "None")
+
+        with patch.dict(os.environ, {
+            "ENVIRONMENT": "development",
+            "OPS_API_KEY": "test_ops_key",
+        }):
+            token, source = extract_token_from_request(req)
+            # In development, it is allowed for convenience
+            self.assertEqual(token, "test_ops_key")
+            self.assertEqual(source, "QueryParam")
+
+    def test_extended_secret_masking(self):
+        # Anthropic key
+        anthropic_log = "Error from Anthropic: key sk-ant-api03-1234567890abcdef1234567890"
+        masked = mask_sensitive_data(anthropic_log)
+        self.assertIn("[REDACTED_API_KEY]", masked)
+        self.assertNotIn("1234567890abcdef", masked)
+
+        # Google API key
+        google_log = "Error from Google: token AIzaSyA1234567890abcdef1234567890"
+        masked_google = mask_sensitive_data(google_log)
+        self.assertIn("[REDACTED", masked_google)
+        self.assertNotIn("AIzaSyA", masked_google)
+
+        # URL Query param secrets
+        url_log = "Failed request to https://api.service.internal/data?api_key=secretKey123&token=myToken456"
+        masked_url = mask_sensitive_data(url_log)
+        self.assertIn("api_key=[REDACTED]", masked_url)
+        self.assertIn("token=[REDACTED]", masked_url)
+        self.assertNotIn("secretKey123", masked_url)
+        self.assertNotIn("myToken456", masked_url)
+
+    def test_rate_limits_registered(self):
+        from app.core.resource_governor import DEFAULT_RATE_LIMITS
+        self.assertIn("public:topic_list", DEFAULT_RATE_LIMITS)
+        self.assertIn("public:topic_detail", DEFAULT_RATE_LIMITS)
+
+

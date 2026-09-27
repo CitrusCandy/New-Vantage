@@ -141,44 +141,6 @@ Services will be accessible at:
 
 ---
 
-## Production Configuration Audit
-
-| Variable | Category | Default / Local Dev | Description |
-| :--- | :--- | :--- | :--- |
-| `DATABASE_URL` | **Required (Prod)** | `postgresql://postgres:password@localhost:5432/vantage_news` | PostgreSQL or SQLite connection URI |
-| `OPENAI_API_KEY` | **Required (Prod)** | *(Empty in tests / offline mock)* | OpenAI API key for embeddings & synthesis |
-| `OPENAI_PERSPECTIVE_MODEL` | Optional | `gpt-4o-mini` | OpenAI chat completion model |
-| `EMBEDDING_PROVIDER` | Optional | `openai` | Embedding model provider (`openai` / `mock`) |
-| `LLM_PROVIDER` | Optional | `openai` | Perspective synthesis provider (`openai` / `mock`) |
-| `REDDIT_CLIENT_ID` | Optional | *(Empty / public fallback)* | Reddit developer script client ID |
-| `REDDIT_CLIENT_SECRET` | Optional | *(Empty / public fallback)* | Reddit developer client secret |
-| `REDDIT_USER_AGENT` | Optional | `VantageNews/2.0.0` | Reddit custom user-agent header |
-| `TRENDING_W1_VELOCITY` | Optional | `0.35` | Trending score weight: 24h mention velocity |
-| `TRENDING_W2_SOURCES` | Optional | `0.25` | Trending score weight: unique platforms count |
-| `TRENDING_W3_ENGAGEMENT` | Optional | `0.25` | Trending score weight: log engagement rate |
-| `TRENDING_W4_DECAY` | Optional | `0.15` | Trending score penalty weight: exponential time decay |
-| `WORKER_INTERVAL_HOURS` | Optional | `2.0` | Background worker cadence interval (hours) |
-| `MIN_TRENDING_SCORE_REFRESH` | Optional | `0.20` | Minimum score threshold for automated ML refresh |
-| `STAGNANT_HOURS_THRESHOLD` | Optional | `48.0` | Inactivity threshold before marking topic stagnant |
-| `DECAY_HALF_LIFE_HOURS` | Optional | `24.0` | Half-life constant for exponential score decay |
-| `ENABLE_ALERT_EVALUATION` | Optional | `true` | Master switch for internal production alerting engine |
-| `ALERT_WORKER_ENABLED` | Optional | `true` | Enable background scheduler alive/stale checks |
-| `ALERT_COOLDOWN_SECONDS` | Optional | `300` | Alert cooldown & deduplication window (seconds) |
-| `ALERT_DB_LATENCY_THRESHOLD_MS` | Optional | `2000.0` | Database ping latency warning threshold (ms) |
-| `ALERT_WORKER_GRACE_PERIOD_SECONDS` | Optional | `1800` | Worker execution grace period beyond cadence (seconds) |
-| `ALERT_SOURCE_STALE_HOURS` | Optional | `24.0` | Inactive enabled source stale threshold (hours) |
-| `ALERT_PIPELINE_FAILURE_THRESHOLD` | Optional | `2` | Recent pipeline failure count threshold |
-| `ALERT_PIPELINE_LATENCY_THRESHOLD_MS` | Optional | `30000.0` | Pipeline execution high latency threshold (ms) |
-| `ALERT_SOURCE_FAILURE_THRESHOLD` | Optional | `3` | Source scraping consecutive failure threshold |
-| `ALERT_LLM_FAILURE_THRESHOLD` | Optional | `2` | Perspective LLM provider failure threshold |
-| `ALERT_X_FAILURE_THRESHOLD` | Optional | `3` | X scraper consecutive failure threshold |
-| `ALERT_MAX_RESOLVED_HISTORY` | Optional | `50` | Maximum resolved alerts kept in in-memory history |
-| `OPS_RETENTION_DAYS` | Optional | `30` | Max age in days for pipeline runs, source executions, and worker cycles |
-| `ALERT_RETENTION_DAYS` | Optional | `90` | Max age in days for resolved operational alerts |
-| `NEXT_PUBLIC_API_URL` | Optional (Frontend) | `http://localhost:8000/api` | Base URL for FastAPI backend proxy |
-
----
-
 ## API & Operations Highlights
 
 - `GET /api/topics/trending` — Top viral topics ranked via multi-source velocity, reach, and time decay.
@@ -275,6 +237,7 @@ python -m app.database.backup --verify vantage_backup_20260916_205500
 
 # Run retention pruning lifecycle
 python -m app.database.backup --cleanup --retention-count 7 --retention-days 30
+
 ```
 
 ### 2. Safe CLI Restoration (HTTP-Disabled)
@@ -288,35 +251,8 @@ python -m app.database.restore --backup backups/vantage_backup_20260916_205500.s
 
 # Dry-run pre-flight validation
 python -m app.database.restore --backup backups/vantage_backup_20260916_205500.sql.gz --dry-run
+
 ```
-
----
-
-## Resilience, Fault Tolerance & Graceful Degradation
-
-Vantage News provides mission-critical fault tolerance across all external integrations and platform dependencies:
-
-1. **Bounded Retries with Jitter**: Exponential backoff with configurable jitter (`full`, `equal`, `decorrelated`) prevents retry storms against third-party providers.
-2. **Circuit Breaker State Machine**: Circuit breakers (`CLOSED`, `OPEN`, `HALF_OPEN`) protect all provider boundaries (`google_news`, `reddit`, `x`, `openai_synthesis`, `embeddings`, `redis_governance`, `trend_discovery`). Fast-fails immediately when `OPEN` to conserve worker threads.
-3. **Graceful Degradation Fallbacks**:
-   - Partial scraper failures merge remaining sources cleanly without state corruption.
-   - LLM outages fall back to fail-soft extractive summaries with clear degradation notices.
-   - Redis disruptions fall back to in-process memory governance with zero dropped requests.
-4. **Cooperative Cancellation & Timeouts**: `CancellationToken` and bounded timeouts ensure graceful worker shutdown without leaked locks or orphan threads.
-## Observability, SLOs, Metrics & Prometheus Exposition
-
-Vantage News provides comprehensive production observability with bounded low-cardinality metrics, real-time Service Level Objective (SLO) compliance, error budget tracking, and Prometheus exposition:
-
-1. **Prometheus Exporter (`/metrics`)**: Standard Prometheus exposition format exposing all platform counters, gauges, and histograms.
-2. **Platform Metrics API (`GET /api/ops/metrics`)**: JSON snapshot of all registered platform metrics and rolling sliding-window percentiles ($P_{50}, P_{90}, P_{95}, P_{99}$).
-3. **SLO Engine (`GET /api/ops/slos`)**: Tracks 9 core platform reliability objectives:
-   - `api_availability` ($\ge 99.9\%$), `api_latency_p95` ($\le 250\text{ ms}$), `ingestion_freshness` ($\le 1800\text{ s}$)
-   - `pipeline_success_rate` ($\ge 99.0\%$), `provider_health` ($\ge 95.0\%$), `worker_liveness` ($\ge 99.5\%$)
-   - `database_query_p95` ($\le 50\text{ ms}$), `redis_governance_uptime` ($\ge 99.9\%$), `resource_budget_compliance` ($\ge 95.0\%$)
-4. **Error Budget & Burn Rates**: Evaluates remaining error budget percentage and multi-window burn rate multipliers ($1\times, 2\times, 5\times, 14.4\times$) with persistent violation logging.
-5. **Interactive Dashboard**: Modern `/ops` interface visualizing SLO health scores, error budget progress bars, burn rate badges, and live latency percentiles.
-
----
 
 ## Production Security, Compliance & Data Protection
 
@@ -343,24 +279,3 @@ Vantage News enforces defense-in-depth security across all architectural layers:
    - Zero raw content or credential tokens persisted in operational or audit logs.
 
 ---
-
-## Automated Quality Gates & Incident Readiness Checklist
-
-Before pushing changes or deploying to production, execute the automated verification gates:
-
-```bash
-# 1. Run release verification gate (checks files, env templates, secret scan, imports, probes)
-python scripts/verify_release.py
-
-# 2. Run incident readiness checklist (probes, database ping, worker state, source freshness, alerts pass)
-python scripts/incident_readiness.py
-
-# 3. Run disaster recovery & backup readiness checklist
-python scripts/disaster_recovery_check.py
-
-# 4. Run complete backend test suite (238 unit, integration, resilience, observability, and security compliance tests)
-pytest backend/tests/ -v
-
-# 5. Verify frontend production compilation
-cd frontend && npm run build
-```

@@ -33,6 +33,8 @@ logger = logging.getLogger("app.core.resource_governor")
 DEFAULT_RATE_LIMITS: Dict[str, Tuple[int, int]] = {
     # Public endpoints
     "public:topic_create": (10, 60),
+    "public:topic_list": (60, 60),
+    "public:topic_detail": (60, 60),
     "public:ingestion": (10, 60),
     "public:merge": (15, 60),
     "public:clustering": (10, 60),

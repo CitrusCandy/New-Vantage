@@ -4,13 +4,14 @@ import re
 from typing import Any, Dict, List, Optional
 import unicodedata
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.core.audit import record_audit_event
 from app.core import resource_governor
-from app.core.security import sanitize_search_query, validate_slug
+from app.core.security import SecurityRole, require_operator, sanitize_search_query, validate_slug
 from app.database.database import get_db
 from app.database.models import Topic
 from app.database.schemas import (
@@ -112,6 +113,7 @@ def list_topics(
     db: Session = Depends(get_db),
 ):
     """Retrieve topics ordered by updated_at descending with optional search filtering."""
+    _enforce_rate_limit("public:topic_list")
     query = db.query(Topic)
     if search:
         clean_search = sanitize_search_query(search)
@@ -166,6 +168,7 @@ def get_topic_by_slug(
     db: Session = Depends(get_db),
 ):
     """Retrieve a single topic along with its perspectives by slug."""
+    _enforce_rate_limit("public:topic_detail")
     topic = db.query(Topic).filter(Topic.slug == slug).first()
     if not topic:
         raise HTTPException(
@@ -179,13 +182,15 @@ def get_topic_by_slug(
     "/{slug}",
     response_model=TopicResponse,
     summary="Update a topic",
+    dependencies=[Depends(require_operator)],
 )
 def update_topic(
     slug: str,
     topic_in: TopicUpdate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    """Update mutable topic fields (title, source coverage). Analytical fields are protected."""
+    """Update mutable topic fields (title, source coverage). Protected operational endpoint."""
     topic = db.query(Topic).filter(Topic.slug == slug).first()
     if not topic:
         raise HTTPException(
@@ -201,6 +206,16 @@ def update_topic(
     topic.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(topic)
+    record_audit_event(
+        action="topic_updated",
+        actor=getattr(request.state, "actor", "operator"),
+        role=getattr(request.state, "role", SecurityRole.OPERATOR).value if hasattr(getattr(request.state, "role", None), "value") else str(getattr(request.state, "role", "operator")),
+        resource=f"/api/topics/{slug}",
+        ip_address=request.client.host if request.client else None,
+        status="allowed",
+        details={"slug": slug, "title": topic.title},
+        db=db,
+    )
     return topic
 
 
@@ -208,9 +223,11 @@ def update_topic(
     "/{slug}",
     status_code=status.HTTP_200_OK,
     summary="Delete a topic",
+    dependencies=[Depends(require_operator)],
 )
 def delete_topic(
     slug: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Safely delete a topic and its associated child records."""
@@ -221,8 +238,19 @@ def delete_topic(
             detail=f"Topic with slug '{slug}' not found",
         )
 
+    topic_title = topic.title
     db.delete(topic)
     db.commit()
+    record_audit_event(
+        action="topic_deleted",
+        actor=getattr(request.state, "actor", "operator"),
+        role=getattr(request.state, "role", SecurityRole.OPERATOR).value if hasattr(getattr(request.state, "role", None), "value") else str(getattr(request.state, "role", "operator")),
+        resource=f"/api/topics/{slug}",
+        ip_address=request.client.host if request.client else None,
+        status="allowed",
+        details={"slug": slug, "title": topic_title},
+        db=db,
+    )
     return {"message": f"Topic '{slug}' and its associated records have been deleted successfully"}
 
 

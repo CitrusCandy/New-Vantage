@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -28,7 +28,7 @@ def record_audit_event(
     2. Emits structured JSON log line.
     3. Persists to SecurityAuditLog table (gracefully catches and logs any DB error without raising).
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     # Sanitize details and error messages
     clean_details = sanitize_dict_secrets(details) if details else {}

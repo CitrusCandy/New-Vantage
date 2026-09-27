@@ -109,10 +109,12 @@ def extract_token_from_request(
             return auth_val[7:].strip(), "Authorization (Bearer)"
         return auth_val, "Authorization"
 
-    # Fallback to query param for token if present (dev/testing inspection only)
-    token_param = request.query_params.get("api_key")
-    if token_param and token_param.strip():
-        return token_param.strip(), "QueryParam"
+    # Fallback to query param for token if present (dev/testing inspection only, forbidden in production)
+    env = os.getenv("ENVIRONMENT", "development").lower()
+    if env != "production":
+        token_param = request.query_params.get("api_key")
+        if token_param and token_param.strip():
+            return token_param.strip(), "QueryParam"
 
     return None, "None"
 
@@ -367,6 +369,10 @@ def _decode_nonstandard_ip(host_str: str) -> Optional[ipaddress.IPv4Address | ip
 
 def is_private_or_forbidden_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Check if an IP address belongs to private, loopback, link-local, multicast, or cloud metadata ranges."""
+    # Unmap IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1 or ::ffff:169.254.169.254) to their underlying IPv4
+    if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped:
+        ip_obj = ip_obj.ipv4_mapped
+
     if (
         ip_obj.is_private
         or ip_obj.is_loopback
@@ -503,14 +509,18 @@ def mask_sensitive_data(text_val: Optional[str]) -> str:
     masked = text_val
     # 1. Mask specific high-entropy credential patterns first
     masked = re.sub(r"sk-[a-zA-Z0-9_\-]{20,}", "[REDACTED_API_KEY]", masked)
+    masked = re.sub(r"sk-ant-[a-zA-Z0-9_\-]{20,}", "[REDACTED_API_KEY]", masked)
+    masked = re.sub(r"AIzaSy[a-zA-Z0-9_\-]{30,}", "[REDACTED_API_KEY]", masked)
     masked = re.sub(r"ghp_[a-zA-Z0-9]{20,}", "[REDACTED_TOKEN]", masked)
     masked = re.sub(r"eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}", "[REDACTED_JWT]", masked)
     masked = re.sub(r"(?i)(bearer\s+)[a-zA-Z0-9_\-\.]{8,}", r"\1[REDACTED]", masked)
     masked = re.sub(r"postgres(?:ql)?://([^:]+):([^@]+)@", r"postgresql://\1:****@", masked)
     masked = re.sub(r"redis://:([^@]+)@", r"redis://:****@", masked)
-    # 2. Mask generic key/secret/password assignments
+    # 2. Mask query string parameter secrets (?api_key=... or &token=...)
+    masked = re.sub(r"(?i)([?&](?:api_key|token|secret|password|key|auth|access_token)=)[^&\s]+", r"\1[REDACTED]", masked)
+    # 3. Mask generic key/secret/password assignments
     masked = re.sub(
-        r"(?i)(token|password|secret|key|cookie|apikey|api_key)[=:\s]+['\"]?[a-zA-Z0-9_\-\.]{8,}['\"]?",
+        r"(?i)(token|password|secret|key|cookie|apikey|api_key|client_secret|client_id|xquik_api_key)[=:\s]+['\"]?[a-zA-Z0-9_\-\.]{8,}['\"]?",
         r"\1: [REDACTED]",
         masked,
     )
@@ -529,6 +539,9 @@ def sanitize_dict_secrets(data: Any) -> Any:
         "ops_api_key",
         "admin_api_key",
         "security_api_key",
+        "xquik_api_key",
+        "client_secret",
+        "client_id",
         "authorization",
         "cookie",
         "session",
@@ -560,6 +573,7 @@ def sanitize_dict_secrets(data: Any) -> Any:
 def get_allowed_cors_origins() -> List[str]:
     """Parse CORS allowed origins from environment variable or return secure defaults."""
     raw = os.getenv("CORS_ORIGINS", "").strip()
+    env = os.getenv("ENVIRONMENT", "development").lower()
     default_local = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
@@ -573,8 +587,9 @@ def get_allowed_cors_origins() -> List[str]:
     if not raw:
         return default_local
     origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
-    for loc in default_local:
-        if loc not in origins:
-            origins.append(loc)
+    if env != "production":
+        for loc in default_local:
+            if loc not in origins:
+                origins.append(loc)
     return origins
 

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import email.utils
 import html
 import logging
@@ -171,7 +171,7 @@ class GoogleNewsIngestor:
                     source_name = entry.publisher
 
                 # Parse publication date
-                published_at = datetime.utcnow()
+                published_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 if hasattr(entry, "published_parsed") and entry.published_parsed:
                     published_at = datetime(*entry.published_parsed[:6])
                 elif hasattr(entry, "published"):

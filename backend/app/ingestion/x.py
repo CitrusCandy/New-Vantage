@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import os
 import re
@@ -75,7 +75,7 @@ class XScraper:
 
                 # 5. Extract timestamp
                 time_elem = elem.find("time")
-                posted_at = datetime.utcnow()
+                posted_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 if time_elem and time_elem.get("datetime"):
                     try:
                         posted_at = datetime.fromisoformat(time_elem["datetime"].replace("Z", "+00:00")).replace(tzinfo=None)
@@ -198,7 +198,7 @@ class XScraper:
                     retweets=retweets,
                     replies=replies,
                     handle=handle,
-                    posted_at=datetime.utcnow(),
+                    posted_at=datetime.now(timezone.utc).replace(tzinfo=None),
                 )
                 db.add(record)
                 staged.append(record)
@@ -213,10 +213,18 @@ class XScraper:
             reraise_last=True,
         )(_fetch_xquik_api)
 
+        t_start = time.perf_counter()
         try:
+            from app.core.telemetry import ops_metrics
             staged_records = x_breaker.execute(fetch_with_retries)
+            latency_ms = (time.perf_counter() - t_start) * 1000.0
+            ops_metrics.record_source_execution("x", success=True, latency_ms=latency_ms, item_count=len(staged_records))
             logger.info("[x] Staged %d records via API for Topic ID %d", len(staged_records), topic.id)
             return staged_records
         except Exception as e:
+            latency_ms = (time.perf_counter() - t_start) * 1000.0
+            is_to = "timed out" in str(e).lower()
+            from app.core.telemetry import ops_metrics
+            ops_metrics.record_source_execution("x", success=False, latency_ms=latency_ms, is_timeout=is_to, error_summary=str(e)[:100])
             logger.error("[x] Fail-soft: X API request failed gracefully for topic '%s': %s", topic.title, str(e))
             return []

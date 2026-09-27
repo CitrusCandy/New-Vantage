@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -83,9 +83,9 @@ class RedditIngestor:
 
                         author_name = str(post.author.name) if getattr(post, "author", None) else None
                         created_utc = (
-                            datetime.utcfromtimestamp(post.created_utc)
+                            datetime.fromtimestamp(post.created_utc, tz=timezone.utc).replace(tzinfo=None)
                             if hasattr(post, "created_utc")
-                            else datetime.utcnow()
+                            else datetime.now(timezone.utc).replace(tzinfo=None)
                         )
 
                         record = RawReddit(
@@ -242,9 +242,9 @@ class RedditIngestor:
 
                 created_utc_ts = post.get("created_utc")
                 created_utc = (
-                    datetime.utcfromtimestamp(created_utc_ts)
+                    datetime.fromtimestamp(created_utc_ts, tz=timezone.utc).replace(tzinfo=None)
                     if created_utc_ts
-                    else datetime.utcnow()
+                    else datetime.now(timezone.utc).replace(tzinfo=None)
                 )
 
                 record = RawReddit(
