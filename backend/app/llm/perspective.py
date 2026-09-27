@@ -349,7 +349,9 @@ def get_perspective_synthesizer(
 ) -> BasePerspectiveSynthesizer:
     """Factory for active LLM perspective synthesizer."""
     ptype = (provider_type or os.getenv("LLM_PROVIDER", "")).lower()
-    if ptype == "mock" or (not ptype and not os.getenv("OPENAI_API_KEY")):
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    from app.processing.embeddings import is_valid_openai_key
+    if ptype == "mock" or not is_valid_openai_key(openai_key) or (ptype != "openai" and not is_valid_openai_key(openai_key)):
         return MockPerspectiveSynthesizer()
-    return OpenAIPerspectiveSynthesizer()
+    return OpenAIPerspectiveSynthesizer(api_key=openai_key)
 

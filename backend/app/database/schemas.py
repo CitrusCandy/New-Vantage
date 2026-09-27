@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TopicBase(BaseModel):
@@ -28,19 +28,64 @@ class TopicResponse(TopicBase):
     trending_score: float
     last_clustered_at: Optional[datetime] = None
     updated_at: datetime
+    created_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def populate_created_at(self) -> "TopicResponse":
+        if self.created_at is None:
+            self.created_at = self.updated_at
+        return self
 
 
 class PerspectiveResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     per_id: int
+    id: Optional[int] = None
     topic_id: int
     perspective_type: str
-    estimated_share: Optional[float] = None
+    estimated_share: Optional[float] = 0.0
+    summary: Optional[str] = None
+    key_arguments: List[str] = []
     summary_points: Optional[Any] = None
     sample_quotes: Optional[Any] = None
     confidence_note: Optional[str] = None
     generated_at: datetime
+    created_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def populate_aliases(self) -> "PerspectiveResponse":
+        if self.id is None:
+            self.id = self.per_id
+        if self.created_at is None:
+            self.created_at = self.generated_at
+        if not self.summary:
+            if isinstance(self.summary_points, dict):
+                self.summary = self.summary_points.get("summary", "")
+            elif isinstance(self.summary_points, str):
+                self.summary = self.summary_points
+            else:
+                self.summary = ""
+        if not self.key_arguments:
+            if isinstance(self.summary_points, dict):
+                self.key_arguments = self.summary_points.get("key_arguments", [])
+            elif isinstance(self.summary_points, list):
+                self.key_arguments = [str(x) for x in self.summary_points]
+            else:
+                self.key_arguments = []
+        if isinstance(self.sample_quotes, list):
+            norm_quotes = []
+            for q in self.sample_quotes:
+                if isinstance(q, dict):
+                    q_dict = dict(q)
+                    text_val = q_dict.get("quote") or q_dict.get("text") or ""
+                    q_dict["quote"] = text_val
+                    q_dict["text"] = text_val
+                    norm_quotes.append(q_dict)
+                else:
+                    norm_quotes.append({"quote": str(q), "text": str(q), "source": "news"})
+            self.sample_quotes = norm_quotes
+        return self
 
 
 class RawDataResponse(BaseModel):

@@ -90,19 +90,20 @@ export const PerspectiveCard: React.FC<PerspectiveCardProps> = ({
           {/* Summary / Narrative Stance */}
           <div className="p-4 rounded-xl bg-slate-900/60 border border-white/[0.04]">
             <p className="text-sm text-slate-300 font-serif leading-relaxed italic">
-              “{perspective.summary}”
+              “{perspective.summary || (perspective as any).summary_points?.summary || (typeof (perspective as any).summary_points === "string" ? (perspective as any).summary_points : "") || "Synthesized public discourse perspective."}”
             </p>
           </div>
 
           {/* Key Arguments */}
-          {perspective.key_arguments && perspective.key_arguments.length > 0 && (
+          {((perspective.key_arguments && perspective.key_arguments.length > 0) ||
+            ((perspective as any).summary_points?.key_arguments && (perspective as any).summary_points.key_arguments.length > 0)) && (
             <div className="space-y-2.5 pt-1">
               <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-indigo-400" />
                 <span>Key Supporting Arguments</span>
               </h4>
               <ul className="space-y-2">
-                {perspective.key_arguments.map((arg, idx) => (
+                {(perspective.key_arguments || (perspective as any).summary_points?.key_arguments || []).map((arg: string, idx: number) => (
                   <li
                     key={idx}
                     className="text-xs sm:text-sm text-slate-300 flex items-start gap-2.5 leading-normal"
@@ -146,7 +147,7 @@ export const PerspectiveCard: React.FC<PerspectiveCardProps> = ({
                     <ChevronRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
                   </div>
                   <p className="text-xs text-slate-300 line-clamp-2 italic font-serif">
-                    “{quote.quote}”
+                    “{quote.quote || (quote as any).text}”
                   </p>
                 </div>
               ))}

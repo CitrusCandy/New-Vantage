@@ -161,11 +161,22 @@ class MockEmbeddingProvider(BaseEmbeddingProvider):
         return embeddings
 
 
+def is_valid_openai_key(key: Optional[str]) -> bool:
+    """Check if provided OpenAI key is valid and not a placeholder."""
+    if not key or not isinstance(key, str):
+        return False
+    k = key.strip()
+    if not k or k.startswith("your_openai_") or "xxx" in k.lower() or k == "placeholder":
+        return False
+    return True
+
+
 def get_embedding_provider(
     provider_type: Optional[str] = None,
 ) -> BaseEmbeddingProvider:
     """Factory for obtaining the active embedding provider."""
     ptype = (provider_type or os.getenv("EMBEDDING_PROVIDER", "")).lower()
-    if ptype == "mock" or (not ptype and not os.getenv("OPENAI_API_KEY")):
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    if ptype == "mock" or not is_valid_openai_key(openai_key) or (ptype != "openai" and not is_valid_openai_key(openai_key)):
         return MockEmbeddingProvider()
-    return OpenAIEmbeddingProvider()
+    return OpenAIEmbeddingProvider(api_key=openai_key)

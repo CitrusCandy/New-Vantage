@@ -55,10 +55,11 @@ export default function TopicDetailPage() {
       const data = await getTopicBySlug(slug);
       setTopic(data);
 
-      // If topic has no perspectives and has not auto-started yet, trigger automatic analysis
+      // If topic has no perspectives, has not been clustered yet, and has not auto-started yet, trigger automatic analysis
       if (
         shouldAutoAnalyze &&
         (!data.perspectives || data.perspectives.length === 0) &&
+        !data.last_clustered_at &&
         !hasAutoStartedRef.current
       ) {
         hasAutoStartedRef.current = true;
@@ -324,11 +325,17 @@ export default function TopicDetailPage() {
 
             <div className="space-y-2">
               <h3 className="font-headline text-xl font-bold text-slate-100">
-                {isRunningPipeline ? "Synthesizing Discourse Brief..." : "No Perspectives Synthesized Yet"}
+                {isRunningPipeline
+                  ? "Synthesizing Discourse Brief..."
+                  : topic.last_clustered_at
+                  ? "Limited Discourse Evidence Gathered"
+                  : "No Perspectives Synthesized Yet"}
               </h3>
               <p className="font-serif-body text-sm text-slate-400">
                 {isRunningPipeline
                   ? "Crawling Google News RSS and Reddit API, deduplicating articles, and clustering distinct viewpoint arguments..."
+                  : topic.last_clustered_at
+                  ? `Discourse crawl gathered ${totalCombined} item(s). Minimum volume threshold for multi-perspective clustering was not met. You can re-run analysis to query updated sources.`
                   : "Click below to trigger automatic 100-item multi-source discourse analysis for this topic."}
               </p>
             </div>
@@ -338,7 +345,7 @@ export default function TopicDetailPage() {
                 onClick={() => handleRunAutoAnalysis()}
                 className="px-5 py-2.5 rounded-lg bg-slate-100 hover:bg-white text-slate-900 text-xs font-bold uppercase tracking-wider shadow-md transition-all"
               >
-                Start Discourse Analysis
+                {topic.last_clustered_at ? "Re-run Discourse Analysis" : "Start Discourse Analysis"}
               </button>
             )}
           </div>

@@ -55,6 +55,11 @@ app.add_middleware(
         "Accept",
         "Origin",
         "User-Agent",
+        "X-Requested-With",
+        "Cache-Control",
+        "Pragma",
+        "If-Modified-Since",
+        "If-None-Match",
     ],
 )
 
@@ -131,7 +136,7 @@ async def security_and_telemetry_middleware(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
 
     # 3. Record Low-Cardinality HTTP Structured Metrics
     norm_path = _normalize_http_path(request.url.path)

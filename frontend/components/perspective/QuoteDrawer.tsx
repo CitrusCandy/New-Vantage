@@ -56,7 +56,7 @@ export const QuoteDrawer: React.FC<QuoteDrawerProps> = ({
             “
           </span>
           <p className="text-sm md:text-base text-slate-200 font-serif leading-relaxed italic pl-5 pr-2">
-            {quote.quote}
+            {quote.quote || (quote as any).text}
           </p>
         </div>
 

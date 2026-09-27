@@ -13,9 +13,21 @@ import {
   WorkerStatus,
 } from "./types";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
-  (typeof window === "undefined" ? "http://127.0.0.1:8000/api" : "/api");
+export function getApiBaseUrl(): string {
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (envUrl && envUrl.trim()) {
+    let clean = envUrl.trim().replace(/\/+$/, "");
+    if (!clean.endsWith("/api")) {
+      clean = `${clean}/api`;
+    }
+    return clean;
+  }
+  return typeof window === "undefined"
+    ? (process.env.INTERNAL_API_URL || process.env.BACKEND_URL || "http://127.0.0.1:8000").replace(/\/+$/, "").replace(/\/api$/, "") + "/api"
+    : "/api";
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 // Minimum polling interval (ms) — prevents hammering the backend
 const MIN_POLL_INTERVAL_MS = parseInt(
@@ -60,17 +72,30 @@ async function fetchJson<T>(
   options: RequestInit = {},
   dedupKey?: string,
 ): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
+  const baseUrl = getApiBaseUrl();
+  const cleanEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  const url = `${baseUrl}${cleanEndpoint}`;
   const signal = _deduplicatedSignal(dedupKey);
-  const response = await fetch(url, {
-    ...options,
-    signal,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    cache: "no-store",
-  });
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+      cache: "no-store",
+    });
+  } catch (err: any) {
+    _clearInflight(dedupKey);
+    if (err.name === "AbortError") {
+      throw new Error("Request was cancelled by a newer query.");
+    }
+    const targetDesc = url.startsWith("http") ? url : `${typeof window !== "undefined" ? window.location.origin : ""}${url}`;
+    throw new Error(`Unable to connect to Vantage News API (${targetDesc}): ${err.message || "Failed to fetch"}`);
+  }
 
   _clearInflight(dedupKey);
 
@@ -110,7 +135,27 @@ export async function getTrendingTopics(limit: number = 8, minScore: number = 0.
 }
 
 export async function getTopicBySlug(slug: string): Promise<Topic> {
-  return fetchJson<Topic>(`/topics/${encodeURIComponent(slug)}`);
+  const data = await fetchJson<Topic>(`/topics/${encodeURIComponent(slug)}`);
+  if (data && Array.isArray(data.perspectives)) {
+    data.perspectives = data.perspectives.map((p: any) => ({
+      id: p.id ?? p.per_id ?? 0,
+      cluster_id: p.cluster_id ?? p.id ?? p.per_id ?? 0,
+      perspective_type: p.perspective_type ?? "General Perspective",
+      summary: p.summary ?? p.summary_points?.summary ?? (typeof p.summary_points === "string" ? p.summary_points : "") ?? "",
+      estimated_share: p.estimated_share ?? 0.0,
+      key_arguments: p.key_arguments ?? p.summary_points?.key_arguments ?? (Array.isArray(p.summary_points) ? p.summary_points : []) ?? [],
+      sample_quotes: (p.sample_quotes ?? []).map((q: any) => ({
+        quote: q.quote ?? q.text ?? "",
+        source: q.source ?? "news",
+        author_handle: q.author_handle,
+        url: q.url,
+        engagement: q.engagement ?? q.engagement_metrics,
+        created_at: q.created_at,
+      })),
+      created_at: p.created_at ?? p.generated_at ?? new Date().toISOString(),
+    }));
+  }
+  return data;
 }
 
 export async function createTopic(data: TopicCreate): Promise<Topic> {

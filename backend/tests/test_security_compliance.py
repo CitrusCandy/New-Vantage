@@ -235,7 +235,7 @@ class TestSecurityHeadersAndLimits(unittest.TestCase):
         self.assertEqual(headers.get("X-Frame-Options"), "DENY")
         self.assertEqual(headers.get("Referrer-Policy"), "strict-origin-when-cross-origin")
         self.assertEqual(headers.get("Cross-Origin-Opener-Policy"), "same-origin")
-        self.assertEqual(headers.get("Cross-Origin-Resource-Policy"), "same-origin")
+        self.assertEqual(headers.get("Cross-Origin-Resource-Policy"), "cross-origin")
         self.assertIn("max-age=31536000", headers.get("Strict-Transport-Security", ""))
         self.assertIn("default-src 'self'", headers.get("Content-Security-Policy", ""))
         self.assertIn("camera=()", headers.get("Permissions-Policy", ""))
