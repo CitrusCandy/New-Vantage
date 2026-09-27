@@ -17,9 +17,13 @@ class PerspectiveItem(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    type: str = Field(..., description="Perspective label, e.g. 'Industry Proponents', 'Regulatory Skeptics'")
-    estimated_share: float = Field(..., description="Estimated percentage or proportion of discourse share")
+    title: Optional[str] = Field(default=None, description="Clear, specific, reader-friendly heading summarizing the central viewpoint")
+    heading: Optional[str] = Field(default=None, description="Alternative alias for title")
+    type: str = Field(default="Neutral Perspective", description="Perspective stance/category label, e.g. 'Industry Proponents', 'Regulatory Skeptics'")
+    stance: Optional[str] = Field(default=None, description="Secondary stance category label")
+    description: Optional[str] = Field(default=None, description="Meaningful narrative explaining what proponents believe, key reasons, and contrast with other viewpoints")
     summary: str = Field(..., description="Narrative synthesis of this viewpoint")
+    estimated_share: float = Field(..., description="Estimated percentage or proportion of discourse share")
     key_arguments: List[str] = Field(default_factory=list, description="Bullet points of key arguments")
     sample_quotes: List[SampleQuote] = Field(
         default_factory=list,

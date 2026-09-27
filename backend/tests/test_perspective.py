@@ -17,11 +17,13 @@ from app.database.models import (
     Perspective,
     Topic,
 )
+from app.database.schemas import PerspectiveResponse
 from app.llm.perspective import (
     BasePerspectiveSynthesizer,
     MockPerspectiveSynthesizer,
     OpenAIPerspectiveSynthesizer,
     get_perspective_synthesizer,
+    validate_and_sanitize_perspectives,
 )
 from app.llm.pipeline import PerspectivePipeline
 from app.llm.schemas import (
@@ -324,3 +326,152 @@ def test_api_synthesize_endpoint(db_session, sample_topic):
         assert data["perspectives_count"] == 2
 
     app.dependency_overrides.clear()
+
+
+# --- Perspective Naming & Explanation Enhancements Tests ---
+
+def test_perspective_sanitization_eliminates_vague_titles():
+    raw_item = PerspectiveItem(
+        type="Support",
+        title="Support",
+        heading="Support",
+        stance="Support",
+        summary="Clinicians and healthcare leaders observe notable reductions in diagnostic triage times across radiology departments.",
+        description="",
+        estimated_share=0.5,
+        key_arguments=["Reduces wait times", "Assists radiologists"],
+        sample_quotes=[
+            SampleQuote(
+                text="Turnaround times decreased by 40% in clinical tests.",
+                source="google_news",
+                url="https://news.example.com/item1",
+            )
+        ],
+    )
+
+    raw_output = PerspectiveSynthesisOutput(
+        core_topic="AI Healthcare Diagnostics",
+        perspectives=[raw_item],
+        confidence_note="Analysis based on clinical discourse.",
+    )
+
+    cleaned = validate_and_sanitize_perspectives(raw_output=raw_output, query="AI Healthcare Diagnostics")
+    assert len(cleaned.perspectives) == 1
+    p = cleaned.perspectives[0]
+
+    # Title must not be the vague "Support" label
+    assert p.title.lower() != "support"
+    assert "diagnostic" in p.title.lower() or "clinical" in p.title.lower() or "ai healthcare" in p.title.lower()
+    assert len(p.title) >= 10
+    # Description must be meaningful and non-empty
+    assert p.description and len(p.description) >= 20
+    # Stance retains categorical role
+    assert p.stance is not None
+
+
+def test_perspective_response_schema_compatibility():
+    # 1. New dictionary summary_points format
+    resp_dict = PerspectiveResponse(
+        per_id=10,
+        topic_id=1,
+        perspective_type="Clinical Diagnostic Efficiency Gains",
+        estimated_share=0.6,
+        summary_points={
+            "title": "Clinical Diagnostic Efficiency Gains",
+            "heading": "Clinical Diagnostic Efficiency Gains",
+            "stance": "Clinical Proponents",
+            "description": "Medical providers emphasize significant reductions in emergency room triage delays.",
+            "summary": "AI tools improve triage speed.",
+            "key_arguments": ["Reduces diagnostic delays", "Eases physician workload"],
+        },
+        sample_quotes=[{"quote": "Saves 2 hours daily", "source": "google_news", "url": "https://example.com"}],
+        generated_at=datetime.utcnow(),
+    )
+    assert resp_dict.title == "Clinical Diagnostic Efficiency Gains"
+    assert resp_dict.stance == "Clinical Proponents"
+    assert "emergency room triage" in resp_dict.description
+    assert resp_dict.id == 10
+    assert len(resp_dict.key_arguments) == 2
+
+    # 2. Legacy list summary_points format (backward compatibility)
+    resp_list = PerspectiveResponse(
+        per_id=11,
+        topic_id=1,
+        perspective_type="Labor Market Displacement Concerns",
+        estimated_share=0.4,
+        summary_points=[
+            "Junior analyst and engineer roles face compression as workflows automate.",
+            "Surplus capital accrues disproportionately to frontier model providers.",
+        ],
+        sample_quotes=[{"text": "Hiring velocity slowed for entry level.", "source": "x"}],
+        generated_at=datetime.utcnow(),
+    )
+    assert resp_list.title == "Labor Market Displacement Concerns"
+    assert "Junior analyst" in resp_list.summary
+    assert len(resp_list.key_arguments) == 2
+    assert resp_list.sample_quotes[0]["quote"] == "Hiring velocity slowed for entry level."
+
+
+def test_mock_synthesizer_informative_headings_and_descriptions():
+    synthesizer = MockPerspectiveSynthesizer()
+    clusters = [
+        {
+            "cluster_id": 1,
+            "size": 20,
+            "share": 0.6,
+            "representative_samples": [
+                {
+                    "source": "google_news",
+                    "text_content": "Enterprise deployments of autonomous developer agents show a 40% reduction in cycle times.",
+                    "url": "https://techchronicle.com/agents",
+                }
+            ],
+        },
+        {
+            "cluster_id": 2,
+            "size": 15,
+            "share": 0.4,
+            "representative_samples": [
+                {
+                    "source": "reddit",
+                    "text_content": "Junior developers express deep anxiety about entry-level job market contraction.",
+                    "url": "https://reddit.com/r/cscareerquestions/123",
+                }
+            ],
+        },
+    ]
+
+    out = synthesizer.synthesize(
+        topic_title="Autonomous AI Developer Agents",
+        cluster_payloads=clusters,
+        total_sample_size=35,
+    )
+
+    assert len(out.perspectives) == 2
+    for p in out.perspectives:
+        # Check that title is specific and not a generic single word
+        assert len(p.title.split()) >= 3
+        assert p.title.lower() not in {"support", "opposition", "perspective 1", "perspective 2"}
+        # Check description is rich and explains the perspective in context
+        assert len(p.description) >= 50
+        assert "autonomous ai developer agents" in p.description.lower()
+        # Stance is provided as secondary label
+        assert p.stance is not None and len(p.stance) >= 4
+        # Sample quotes are grounded
+        assert len(p.sample_quotes) >= 1
+        assert p.sample_quotes[0].url.startswith("https://")
+
+
+def test_sparse_and_low_confidence_clusters_handled_honestly():
+    synthesizer = MockPerspectiveSynthesizer()
+
+    # When total sample size is below threshold (< 2)
+    out_sparse = synthesizer.synthesize(
+        topic_title="Extremely Obscure Niche Query",
+        cluster_payloads=[],
+        total_sample_size=1,
+    )
+
+    assert len(out_sparse.perspectives) == 0
+    assert "limited evidence" in out_sparse.confidence_note.lower()
+

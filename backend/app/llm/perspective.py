@@ -2,8 +2,9 @@ from abc import ABC, abstractmethod
 import json
 import logging
 import os
+import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 import urllib.error
 import urllib.request
 
@@ -46,22 +47,26 @@ Instructions:
 1. Identify 5 to 10 distinct, substantive perspectives or stances from the provided discourse clusters that DIRECTLY address the user's specific query. Aim for 10 distinct viewpoints when the discourse evidence is rich and multifaceted, and return at least 5 when the available evidence supports that many.
 2. Ensure EVERY perspective directly addresses the core query topic. Do NOT output off-topic commentary, generic boilerplate, or unrelated subjects.
 3. Represent diverse stakeholder angles (e.g. Economic/Commercial Opportunity, Regulatory & Policy Skepticism, Technical & Scientific Feasibility, Labor & Workforce Impacts, Consumer & Public Safety, Ethical & Environmental Considerations).
-4. Do NOT output duplicate or near-duplicate perspectives (e.g. paraphrased versions of the same argument). Each perspective must represent a genuinely distinct reasoning, viewpoint, or stakeholder concern.
-5. For each perspective:
-   - Provide a clear, neutral 'type' name (e.g. 'Enterprise Productivity Proponents', 'Privacy & Surveillance Concerns', 'Open Standards Advocates').
-   - Estimate the discourse share (0.0 to 1.0 or percentage) based on cluster proportions.
-   - Write a concise narrative summary directly addressing the query.
-   - List 2 to 4 concrete key arguments.
-   - Provide 1 to 3 representative sample quotes verbatim or near-verbatim, strictly attributing the correct source and URL from the input data.
-6. When the evidence is limited or sparse, return only the distinct viewpoints genuinely supported by the gathered sources, and explicitly state in 'confidence_note' that evidence coverage is limited. Never fabricate claims, sources, or quotes.
+4. Do NOT output duplicate or near-duplicate perspectives. Each perspective must represent a genuinely distinct reasoning, viewpoint, or stakeholder concern.
+5. For each perspective provide:
+   - "title": A clear, specific, reader-friendly heading (6 to 12 words) summarizing the central viewpoint in plain language (e.g., "Focus on Clinical Workflow Gains and Diagnostic Turnaround Times", "Concerns Over Patient Data Privacy and Training Consent", "Questions Regarding Long-Term Infrastructure and Upfront Implementation Costs"). NEVER use vague labels like "Support", "Opposition", "Neutral", "Pro", "Con", or "Perspective 1" as the title.
+   - "stance": A concise secondary stakeholder category label (e.g., "Clinical Proponents", "Privacy & Ethical Concerns", "Infrastructure & Cost Considerations", "Regulatory Oversight", "Consumer Sentiment").
+   - "description": A meaningful, informative 2-4 sentence narrative explaining what people holding this perspective believe, the core reasons or concerns they emphasize, and how their position is situated relative to other perspectives on the topic. Use neutral framing ("Proponents emphasize...", "Critics argue that...", "Industry observers point to..."). Do not present any perspective as objectively correct.
+   - "summary": A concise 1-2 sentence core takeaway.
+   - "estimated_share": Estimated discourse share (0.0 to 1.0) based on cluster proportions.
+   - "key_arguments": 2 to 4 concrete supporting arguments directly grounded in the cluster's text.
+   - "sample_quotes": 1 to 3 representative verbatim quotes with authentic source and URL from the input data.
+6. When the evidence is limited, sparse, or mixed, candidly describe the scope of evidence in "description" and "confidence_note". Never fabricate claims, sources, or quotes.
 7. Output MUST be valid JSON adhering strictly to the required schema:
 {
   "core_topic": "string",
   "perspectives": [
     {
-      "type": "string",
-      "estimated_share": 0.0,
+      "title": "string",
+      "stance": "string",
+      "description": "string",
       "summary": "string",
+      "estimated_share": 0.0,
       "key_arguments": ["string"],
       "sample_quotes": [
         {"text": "string", "source": "string", "url": "string"}
@@ -198,34 +203,81 @@ Instructions:
         return "\n".join(lines)
 
 
+VAGUE_TITLES: Set[str] = {
+    "support", "opposition", "neutral", "pro", "con", "positive", "negative",
+    "perspective 1", "perspective 2", "perspective 3", "perspective 4", "perspective 5",
+    "perspective group 1", "perspective group 2", "perspective group 3",
+    "group 1", "group 2", "group 3", "group 4", "group 5",
+    "general", "other", "stance", "viewpoint", "overview",
+}
+
+
+def _clean_title(raw_title: Optional[str], fallback_summary: str, query: str) -> str:
+    """Ensure every perspective has a specific, informative, reader-friendly title."""
+    if raw_title and raw_title.strip():
+        clean = raw_title.strip()
+        # Strip generic prefixes like "Perspective: " or "Topic - "
+        clean = re.sub(r"^(perspective|stance|viewpoint)\s*[\d:#-]*\s*", "", clean, flags=re.IGNORECASE)
+        clean = clean.strip().rstrip(".:")
+        if clean.lower() not in VAGUE_TITLES and len(clean) >= 8:
+            return clean
+
+    # Synthesize title from first sentence of summary or key arguments
+    if fallback_summary:
+        first_sentence = fallback_summary.split(".")[0].strip()
+        first_sentence = re.sub(r"^[\"\']|[\"\']$", "", first_sentence).strip()
+        if 10 <= len(first_sentence) <= 85:
+            return first_sentence
+        elif len(first_sentence) > 85:
+            words = first_sentence.split()
+            return " ".join(words[:10]) + "..."
+
+    return f"Key Perspectives and Discourse on {query}"
+
+
 def validate_and_sanitize_perspectives(
     raw_output: PerspectiveSynthesisOutput,
     query: str,
     cluster_payloads: Optional[List[Dict[str, Any]]] = None,
 ) -> PerspectiveSynthesisOutput:
-    """Validate query relevance, deduplicate near-identical perspectives, and sanitize URLs."""
+    """Validate query relevance, deduplicate near-identical perspectives, eliminate vague headings, and sanitize URLs."""
     from app.processing.relevance import calculate_query_relevance
 
     validated_perspectives: List[PerspectiveItem] = []
-    seen_types: Set[str] = set()
+    seen_titles: Set[str] = set()
 
     for p in raw_output.perspectives:
         # 1. Sanitize quote URLs
         for q in p.sample_quotes:
             q.url = sanitize_url(q.url)
 
-        # 2. Deduplicate exact or near-identical perspective types
-        norm_type = p.type.lower().strip()
-        if norm_type in seen_types:
-            logger.info("Dropping duplicate perspective type: '%s'", p.type)
-            continue
-        seen_types.add(norm_type)
+        # 2. Derive & clean title, stance, description
+        cand_title = p.title or p.heading or p.type
+        clean_title_str = _clean_title(cand_title, p.summary, query)
+        p.title = clean_title_str
+        p.heading = clean_title_str
 
-        # 3. Validate query relevance
-        comb_text = f"{p.type} {p.summary} {' '.join(p.key_arguments)}"
+        # Clean stance category
+        if not p.stance:
+            p.stance = p.type if (p.type and p.type.lower() not in VAGUE_TITLES) else "Stakeholder Perspective"
+        p.type = p.title
+
+        # Meaningful contextual description
+        if not p.description or len(p.description.strip()) < 15:
+            p.description = p.summary or f"Observed public discourse viewpoint regarding {query}."
+
+        # 3. Deduplicate exact or near-identical perspective titles
+        norm_title = p.title.lower().strip()
+        if norm_title in seen_titles:
+            logger.info("Dropping duplicate perspective title: '%s'", p.title)
+            continue
+        seen_titles.add(norm_title)
+
+        # 4. Validate query relevance
+        comb_text = f"{p.title} {p.stance} {p.description} {p.summary} {' '.join(p.key_arguments)}"
         score, is_rel = calculate_query_relevance(query=query, text=comb_text)
         if not is_rel:
-            logger.warning("Dropping off-query perspective: '%s' (score=%.2f)", p.type, score)
+            logger.warning("Dropping off-query perspective: '%s' (score=%.2f)", p.title, score)
             continue
 
         validated_perspectives.append(p)
@@ -249,7 +301,7 @@ def validate_and_sanitize_perspectives(
 
 
 class MockPerspectiveSynthesizer(BasePerspectiveSynthesizer):
-    """Deterministic offline mock synthesizer extracting grounded perspectives from input samples."""
+    """Deterministic offline mock synthesizer extracting grounded, reader-friendly perspectives from input samples."""
 
     model_name = "mock-perspective-synthesizer-v2"
 
@@ -272,8 +324,17 @@ class MockPerspectiveSynthesizer(BasePerspectiveSynthesizer):
                 confidence_note=f"Limited evidence: Only {total_sample_size} sources available for topic '{topic_title}'. Insufficient grounded discourse to synthesize perspectives.",
             )
 
-        for cluster in cluster_payloads:
-            c_id = cluster.get("cluster_id", len(perspectives) + 1)
+        # Thematic stance angle archetypes to assign contextual flavor when clustering
+        angle_archetypes = [
+            ("Advocacy & Economic Opportunity", "Proponents highlight commercial potential, operational efficiency, and rapid technological advancement."),
+            ("Regulatory & Safety Skepticism", "Critics and policy observers emphasize regulatory compliance, risk mitigation, and oversight requirements."),
+            ("Technical Feasibility & Implementation", "Practitioners focus on infrastructure readiness, integration complexity, and deployment hurdles."),
+            ("Workforce & Public Impact", "Industry participants and commentators examine labor transitions, consumer trust, and societal effects."),
+            ("Cost & Resource Allocation", "Financial analysts and stakeholders weigh high initial capital expenditure against projected long-term ROI."),
+        ]
+
+        for idx, cluster in enumerate(cluster_payloads):
+            c_id = cluster.get("cluster_id", idx + 1)
             size = cluster.get("size", 1)
             share = cluster.get("share", round(size / max(total_sample_size, 1), 4))
             samples = cluster.get("representative_samples", [])
@@ -283,12 +344,21 @@ class MockPerspectiveSynthesizer(BasePerspectiveSynthesizer):
             sample_src = primary_sample.get("source", "news")
             sample_url = sanitize_url(primary_sample.get("url"))
 
-            # Derive perspective type from cluster index and sample content
-            type_label = f"{topic_title} - Perspective Group {c_id}"
+            archetype_idx = idx % len(angle_archetypes)
+            stance_label, context_theme = angle_archetypes[archetype_idx]
+
+            # Derive reader-friendly title from cluster content
+            heading = f"Perspective on {topic_title} Implementation and Impact"
             if sample_text:
-                first_sentence = sample_text.split(".")[0].strip()
-                if 5 < len(first_sentence) <= 60:
-                    type_label = f"{topic_title}: {first_sentence}"
+                first_sent = sample_text.split(".")[0].strip()
+                first_sent = re.sub(r"[^\w\s-]", "", first_sent).strip()
+                if 12 <= len(first_sent) <= 75:
+                    heading = first_sent
+                elif len(first_sent) > 75:
+                    words = first_sent.split()
+                    heading = " ".join(words[:9])
+                else:
+                    heading = f"{stance_label}: {topic_title}"
 
             quotes: List[SampleQuote] = []
             for s in samples[:2]:
@@ -311,19 +381,35 @@ class MockPerspectiveSynthesizer(BasePerspectiveSynthesizer):
                     )
                 )
 
-            summary = f"Discourse analysis for {topic_title} representing {round(share * 100, 1)}% of observed viewpoints."
+            summary_text = (
+                f"Discourse analysis for {topic_title} representing approximately {round(share * 100, 1)}% of sampled discussions. "
+                f"{context_theme}"
+            )
             if sample_text:
-                summary += f" Key finding: '{sample_text[:100]}...'"
+                summary_text += f" Source observation: \"{sample_text[:100]}...\""
+
+            description_text = (
+                f"Participants representing this viewpoint emphasize {stance_label.lower()} regarding {topic_title}. "
+                f"Drawing upon {size} verified records across {sample_src.upper()}, this perspective highlights practical considerations "
+                f"and distinguishes itself by focusing on concrete evidence and stakeholder impacts."
+            )
+
+            key_arguments = [
+                f"Viewpoint established from {size} recorded items in cluster #{c_id}.",
+                f"Directly addresses {topic_title} with focus on {stance_label.lower()}.",
+                f"Grounded in verified {sample_src} reporting and discussion.",
+            ]
 
             perspectives.append(
                 PerspectiveItem(
-                    type=type_label,
+                    title=heading,
+                    heading=heading,
+                    type=heading,
+                    stance=stance_label,
+                    description=description_text,
+                    summary=summary_text,
                     estimated_share=share,
-                    summary=summary,
-                    key_arguments=[
-                        f"Discourse viewpoint representing {size} recorded items in cluster #{c_id}.",
-                        f"Grounded in verified {sample_src} reporting and discussion.",
-                    ],
+                    key_arguments=key_arguments,
                     sample_quotes=quotes,
                 )
             )

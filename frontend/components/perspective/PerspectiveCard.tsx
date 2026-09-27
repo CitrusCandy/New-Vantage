@@ -31,7 +31,10 @@ export const PerspectiveCard: React.FC<PerspectiveCardProps> = ({
   const [selectedQuote, setSelectedQuote] = useState<SampleQuote | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
-  const style = getStanceBadgeStyle(perspective.perspective_type);
+  const stanceName = perspective.stance || perspective.perspective_type;
+  const headingTitle = perspective.heading || perspective.title || perspective.perspective_type;
+  const descriptionText = perspective.description || perspective.summary || (perspective as any).summary_points?.description || (perspective as any).summary_points?.summary || "Synthesized public discourse perspective.";
+  const style = getStanceBadgeStyle(stanceName);
   const percentShare = Math.round(
     (perspective.estimated_share / totalShareSum) * 100
   );
@@ -56,13 +59,17 @@ export const PerspectiveCard: React.FC<PerspectiveCardProps> = ({
             {/* Stance Pill */}
             <div
               className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${style.bg} ${style.text} ${style.border}`}
+              title={`Secondary stance label: ${stanceName}`}
             >
               <span className={`w-2 h-2 rounded-full ${style.dot}`} />
-              <span>{style.label}</span>
+              <span>{stanceName}</span>
             </div>
 
             {/* Estimated Share Badge */}
-            <div className="flex items-center gap-2 px-3 py-1 rounded-xl bg-surface-light border border-surface-border">
+            <div
+              className="flex items-center gap-2 px-3 py-1 rounded-xl bg-surface-light border border-surface-border cursor-help"
+              title="Estimated percentage of sampled online discourse in this cluster (not a scientific poll)"
+            >
               <span className="text-[11px] text-slate-400 font-medium uppercase tracking-wider">
                 Est. Share:
               </span>
@@ -72,10 +79,10 @@ export const PerspectiveCard: React.FC<PerspectiveCardProps> = ({
             </div>
           </div>
 
-          {/* Perspective Title */}
+          {/* Perspective Title / Heading */}
           <div>
             <h3 className="text-lg md:text-xl font-extrabold text-slate-100 tracking-tight leading-snug">
-              {perspective.perspective_type}
+              {headingTitle}
             </h3>
 
             {/* Progress Bar for Share */}
@@ -87,10 +94,10 @@ export const PerspectiveCard: React.FC<PerspectiveCardProps> = ({
             </div>
           </div>
 
-          {/* Summary / Narrative Stance */}
-          <div className="p-4 rounded-xl bg-slate-900/60 border border-white/[0.04]">
-            <p className="text-sm text-slate-300 font-serif leading-relaxed italic">
-              “{perspective.summary || (perspective as any).summary_points?.summary || (typeof (perspective as any).summary_points === "string" ? (perspective as any).summary_points : "") || "Synthesized public discourse perspective."}”
+          {/* Contextual Narrative Description */}
+          <div className="p-4 rounded-xl bg-slate-900/70 border border-white/[0.06] space-y-2">
+            <p className="text-sm text-slate-200 leading-relaxed font-sans">
+              {descriptionText}
             </p>
           </div>
 
@@ -161,7 +168,7 @@ export const PerspectiveCard: React.FC<PerspectiveCardProps> = ({
         quote={selectedQuote}
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
-        perspectiveType={perspective.perspective_type}
+        perspectiveType={headingTitle}
       />
     </>
   );

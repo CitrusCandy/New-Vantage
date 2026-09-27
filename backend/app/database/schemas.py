@@ -44,6 +44,10 @@ class PerspectiveResponse(BaseModel):
     id: Optional[int] = None
     topic_id: int
     perspective_type: str
+    title: Optional[str] = None
+    heading: Optional[str] = None
+    description: Optional[str] = None
+    stance: Optional[str] = None
     estimated_share: Optional[float] = 0.0
     summary: Optional[str] = None
     key_arguments: List[str] = []
@@ -59,13 +63,36 @@ class PerspectiveResponse(BaseModel):
             self.id = self.per_id
         if self.created_at is None:
             self.created_at = self.generated_at
+
+        # Summary points resolution
+        sp_dict = self.summary_points if isinstance(self.summary_points, dict) else {}
+
+        # Populate title & heading
+        if not self.title:
+            self.title = sp_dict.get("title") or sp_dict.get("heading") or self.perspective_type
+        if not self.heading:
+            self.heading = self.title
+
+        # Populate stance
+        if not self.stance:
+            self.stance = sp_dict.get("stance") or self.perspective_type
+
+        # Populate summary
         if not self.summary:
             if isinstance(self.summary_points, dict):
-                self.summary = self.summary_points.get("summary", "")
+                self.summary = self.summary_points.get("summary", "") or self.summary_points.get("description", "")
             elif isinstance(self.summary_points, str):
                 self.summary = self.summary_points
+            elif isinstance(self.summary_points, list) and self.summary_points:
+                self.summary = str(self.summary_points[0])
             else:
                 self.summary = ""
+
+        # Populate description
+        if not self.description:
+            self.description = sp_dict.get("description") or self.summary or f"Synthesized public discourse perspective regarding {self.perspective_type}."
+
+        # Populate key_arguments
         if not self.key_arguments:
             if isinstance(self.summary_points, dict):
                 self.key_arguments = self.summary_points.get("key_arguments", [])
@@ -73,6 +100,8 @@ class PerspectiveResponse(BaseModel):
                 self.key_arguments = [str(x) for x in self.summary_points]
             else:
                 self.key_arguments = []
+
+        # Populate sample_quotes
         if isinstance(self.sample_quotes, list):
             norm_quotes = []
             for q in self.sample_quotes:

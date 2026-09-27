@@ -230,9 +230,11 @@ class TestPerspectiveSynthesisValidationAndTargets(unittest.TestCase):
         self.assertEqual(len(output.perspectives), 5)
         self.assertEqual(output.core_topic, query)
 
-        # Check evidence grounding
+        # Check evidence grounding, specific headings, descriptions, and stance
         for p in output.perspectives:
-            self.assertIn(query, p.type)
+            self.assertTrue(len(p.title) >= 10)
+            self.assertTrue(len(p.description) >= 25)
+            self.assertTrue(p.stance is not None and len(p.stance) >= 3)
             self.assertTrue(len(p.key_arguments) >= 1)
             self.assertTrue(len(p.sample_quotes) >= 1)
 

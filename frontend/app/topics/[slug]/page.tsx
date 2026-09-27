@@ -106,7 +106,7 @@ export default function TopicDetailPage() {
   const perspectivesList = useMemo(() => {
     return realPerspectives.filter((p) => {
       if (selectedStance !== "all") {
-        const category = classifyStance(p.perspective_type);
+        const category = classifyStance(p.stance || p.perspective_type);
         if (category !== selectedStance) return false;
       }
       if (selectedSource !== "all") {

@@ -187,15 +187,20 @@ class PerspectivePipeline:
 
             persisted_perspectives: List[Perspective] = []
             for p in synthesis_output.perspectives:
+                heading_val = p.title or p.heading or p.type
                 summary_points_payload = {
-                    "summary": p.summary,
+                    "title": heading_val,
+                    "heading": heading_val,
+                    "description": p.description or p.summary,
+                    "stance": p.stance or heading_val,
+                    "summary": p.summary or p.description,
                     "key_arguments": p.key_arguments,
                 }
                 sample_quotes_payload = [q.model_dump() for q in p.sample_quotes]
 
                 record = Perspective(
                     topic_id=topic.id,
-                    perspective_type=p.type,
+                    perspective_type=heading_val,
                     estimated_share=p.estimated_share,
                     summary_points=summary_points_payload,
                     sample_quotes=sample_quotes_payload,

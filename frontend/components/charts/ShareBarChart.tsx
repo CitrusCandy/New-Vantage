@@ -28,7 +28,7 @@ export const ShareBarChart: React.FC<ShareBarChartProps> = ({
             </span>
           </h4>
           <p className="text-xs text-slate-400 mt-0.5">
-            Estimated distribution of public sentiment across clustered sources
+            Estimated distribution across sampled online discussion clusters (not a scientific poll)
           </p>
         </div>
       </div>
@@ -37,7 +37,9 @@ export const ShareBarChart: React.FC<ShareBarChartProps> = ({
       <div className="h-4 w-full bg-slate-900 rounded-xl overflow-hidden flex gap-0.5 p-0.5 border border-white/[0.06] shadow-inner">
         {perspectives.map((p) => {
           const percent = Math.round((p.estimated_share / totalShare) * 100);
-          const style = getStanceBadgeStyle(p.perspective_type);
+          const stanceName = p.stance || p.perspective_type;
+          const headingTitle = p.heading || p.title || p.perspective_type;
+          const style = getStanceBadgeStyle(stanceName);
           const isSelected = selectedId === p.id;
 
           return (
@@ -61,7 +63,7 @@ export const ShareBarChart: React.FC<ShareBarChartProps> = ({
                   ? "#06b6d4"
                   : "#64748b",
               }}
-              title={`${p.perspective_type}: ${percent}%`}
+              title={`${headingTitle} (${stanceName}): ${percent}%`}
             />
           );
         })}
@@ -71,7 +73,9 @@ export const ShareBarChart: React.FC<ShareBarChartProps> = ({
       <div className="flex flex-wrap items-center gap-2 pt-1">
         {perspectives.map((p) => {
           const percent = Math.round((p.estimated_share / totalShare) * 100);
-          const style = getStanceBadgeStyle(p.perspective_type);
+          const stanceName = p.stance || p.perspective_type;
+          const headingTitle = p.heading || p.title || p.perspective_type;
+          const style = getStanceBadgeStyle(stanceName);
           const isSelected = selectedId === p.id;
 
           return (
@@ -83,9 +87,10 @@ export const ShareBarChart: React.FC<ShareBarChartProps> = ({
                   ? `${style.bg} ${style.text} ${style.border} ring-1 ring-white/30 scale-105`
                   : "bg-surface-light/60 text-slate-300 border-white/[0.05] hover:border-white/20 hover:text-white"
               }`}
+              title={headingTitle}
             >
               <span className={`w-2 h-2 rounded-full ${style.dot}`} />
-              <span className="font-semibold">{p.perspective_type}</span>
+              <span className="font-semibold max-w-[220px] truncate">{headingTitle}</span>
               <span className="text-slate-400 font-mono text-[11px]">
                 {percent}%
               </span>

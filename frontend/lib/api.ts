@@ -137,23 +137,35 @@ export async function getTrendingTopics(limit: number = 8, minScore: number = 0.
 export async function getTopicBySlug(slug: string): Promise<Topic> {
   const data = await fetchJson<Topic>(`/topics/${encodeURIComponent(slug)}`);
   if (data && Array.isArray(data.perspectives)) {
-    data.perspectives = data.perspectives.map((p: any) => ({
-      id: p.id ?? p.per_id ?? 0,
-      cluster_id: p.cluster_id ?? p.id ?? p.per_id ?? 0,
-      perspective_type: p.perspective_type ?? "General Perspective",
-      summary: p.summary ?? p.summary_points?.summary ?? (typeof p.summary_points === "string" ? p.summary_points : "") ?? "",
-      estimated_share: p.estimated_share ?? 0.0,
-      key_arguments: p.key_arguments ?? p.summary_points?.key_arguments ?? (Array.isArray(p.summary_points) ? p.summary_points : []) ?? [],
-      sample_quotes: (p.sample_quotes ?? []).map((q: any) => ({
-        quote: q.quote ?? q.text ?? "",
-        source: q.source ?? "news",
-        author_handle: q.author_handle,
-        url: q.url,
-        engagement: q.engagement ?? q.engagement_metrics,
-        created_at: q.created_at,
-      })),
-      created_at: p.created_at ?? p.generated_at ?? new Date().toISOString(),
-    }));
+    data.perspectives = data.perspectives.map((p: any) => {
+      const sp = p.summary_points || {};
+      const titleVal = p.title ?? p.heading ?? sp.title ?? sp.heading ?? p.perspective_type ?? "Perspective";
+      const descVal = p.description ?? sp.description ?? p.summary ?? sp.summary ?? (typeof p.summary_points === "string" ? p.summary_points : "") ?? "";
+      const stanceVal = p.stance ?? sp.stance ?? p.perspective_type ?? "Neutral";
+      const summaryVal = p.summary ?? sp.summary ?? descVal;
+
+      return {
+        id: p.id ?? p.per_id ?? 0,
+        cluster_id: p.cluster_id ?? p.id ?? p.per_id ?? 0,
+        perspective_type: titleVal,
+        title: titleVal,
+        heading: titleVal,
+        stance: stanceVal,
+        description: descVal,
+        summary: summaryVal,
+        estimated_share: p.estimated_share ?? 0.0,
+        key_arguments: p.key_arguments ?? sp.key_arguments ?? (Array.isArray(p.summary_points) ? p.summary_points : []) ?? [],
+        sample_quotes: (p.sample_quotes ?? []).map((q: any) => ({
+          quote: q.quote ?? q.text ?? "",
+          source: q.source ?? "news",
+          author_handle: q.author_handle,
+          url: q.url,
+          engagement: q.engagement ?? q.engagement_metrics,
+          created_at: q.created_at,
+        })),
+        created_at: p.created_at ?? p.generated_at ?? new Date().toISOString(),
+      };
+    });
   }
   return data;
 }

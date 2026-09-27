@@ -20,6 +20,10 @@ export interface Perspective {
   id: number;
   cluster_id: number;
   perspective_type: string;
+  title?: string;
+  heading?: string;
+  description?: string;
+  stance?: string;
   summary: string;
   estimated_share: number;
   key_arguments: string[];
