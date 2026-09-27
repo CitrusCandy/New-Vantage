@@ -37,7 +37,7 @@ class IngestionPipeline:
         self,
         topic: Topic,
         db: Session,
-        limit_per_source: int = 50,
+        limit_per_source: int = 100,
         per_source_timeout: float = 10.0,
         cancellation_token: Optional[CancellationToken] = None,
     ) -> Dict[str, Any]:
@@ -156,9 +156,15 @@ class IngestionPipeline:
                 "message": msg,
             }
 
+        total_staged = sum(staging_counts.values())
+        target_items = 100
+
         return {
             "topic_id": topic.id,
             "topic_title": topic.title,
+            "target_items": target_items,
+            "total_staged": total_staged,
+            "target_met": total_staged >= target_items,
             "staging_counts": staging_counts,
             "staging_errors": staging_errors,
             "provider_diagnostics": provider_diagnostics,

@@ -47,7 +47,7 @@ class RedditIngestor:
         self,
         topic: Topic,
         db: Session,
-        limit: int = 50,
+        limit: int = 100,
         timeout_seconds: float = 10.0,
     ) -> List[RawReddit]:
         """Fetch posts for the topic and persist to raw_reddit staging table."""
@@ -117,7 +117,7 @@ class RedditIngestor:
         self,
         topic: Topic,
         db: Session,
-        limit: int = 50,
+        limit: int = 100,
         timeout_seconds: float = 10.0,
     ) -> List[RawReddit]:
         """Fallback public REST API scraper with bounded multi-page pagination."""
@@ -130,7 +130,7 @@ class RedditIngestor:
         staged_all: List[RawReddit] = []
         seen_post_ids: Set[str] = set()
         after_token: Optional[str] = None
-        max_pages = 4  # Bounded pagination (up to ~100-200 items)
+        max_pages = 5  # Bounded pagination (up to ~100-200 items)
         page = 0
 
         backoff = BackoffStrategy(base_delay=0.3, max_delay=3.0, multiplier=2.0, jitter_mode=JitterMode.FULL)

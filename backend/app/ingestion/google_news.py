@@ -38,7 +38,7 @@ class GoogleNewsIngestor:
         self,
         topic: Topic,
         db: Session,
-        limit: int = 50,
+        limit: int = 100,
         timeout_seconds: float = 10.0,
     ) -> List[RawGoogleNews]:
         """Fetch RSS feed using feedparser, parse items, and stage them into raw_google_news with bounded query expansion."""
@@ -61,12 +61,15 @@ class GoogleNewsIngestor:
         }
         backoff = BackoffStrategy(base_delay=0.3, max_delay=3.0, multiplier=2.0, jitter_mode=JitterMode.FULL)
 
-        # Formulate query variations for higher coverage when limit > 30
-        query_variations = [topic.title]
-        if limit > 30:
-            clean_title = topic.title.strip()
+        # Formulate query variations for higher coverage when targeting 100+ items
+        clean_title = topic.title.strip()
+        query_variations = [clean_title]
+        if limit > 20:
             query_variations.append(f'"{clean_title}"')
-            query_variations.append(f"{clean_title} news analysis")
+            query_variations.append(f"{clean_title} analysis")
+            query_variations.append(f"{clean_title} opinion")
+            query_variations.append(f"{clean_title} news")
+            query_variations.append(f"{clean_title} debate")
 
         staged_all: List[RawGoogleNews] = []
         seen_links: Set[str] = set()

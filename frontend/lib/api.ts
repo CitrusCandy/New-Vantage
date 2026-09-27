@@ -120,7 +120,14 @@ export async function createTopic(data: TopicCreate): Promise<Topic> {
   });
 }
 
-export async function triggerIngestion(slug: string, limitPerSource: number = 50): Promise<any> {
+export async function submitTopicAndAnalyze(title: string, limitPerSource: number = 100): Promise<any> {
+  return fetchJson<any>(`/topics/submit-and-analyze?limit_per_source=${limitPerSource}`, {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function triggerIngestion(slug: string, limitPerSource: number = 100): Promise<any> {
   return fetchJson(`/topics/${encodeURIComponent(slug)}/ingest?limit_per_source=${limitPerSource}`, {
     method: "POST",
   });
@@ -138,7 +145,7 @@ export async function triggerSynthesis(slug: string, minVolume: number = 5): Pro
   });
 }
 
-export async function triggerFullPipeline(slug: string, limitPerSource: number = 50, minVolume: number = 5): Promise<any> {
+export async function triggerFullPipeline(slug: string, limitPerSource: number = 100, minVolume: number = 5): Promise<any> {
   return fetchJson(`/topics/${encodeURIComponent(slug)}/run-pipeline?limit_per_source=${limitPerSource}&min_volume_threshold=${minVolume}`, {
     method: "POST",
   });

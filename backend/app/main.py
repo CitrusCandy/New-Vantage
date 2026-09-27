@@ -66,7 +66,7 @@ def _normalize_http_path(path: str) -> str:
         return "/"
     if parts[0] == "api" and len(parts) > 1:
         if parts[1] == "topics":
-            if len(parts) >= 3 and parts[2] in ("trending", "search", "categories"):
+            if len(parts) >= 3 and parts[2] in ("trending", "search", "categories", "submit-and-analyze"):
                 return f"/api/topics/{parts[2]}"
             elif len(parts) >= 3:
                 return "/api/topics/{slug}"

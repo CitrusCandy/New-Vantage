@@ -3,6 +3,8 @@ export interface SourceCoverage {
   reddit: number;
   x: number;
   total_combined: number;
+  target_items?: number;
+  target_met?: boolean;
 }
 
 export interface SampleQuote {

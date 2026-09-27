@@ -1,14 +1,16 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Inter:wght@300;400;500;600;700;800&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Playfair+Display:ital,wght@0,500;0,600;0,700;0,900;1,400;1,600;1,700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: #0a0d14;
-  --foreground: #f1f5f9;
+  --background: #090c10;
+  --foreground: #f0f6fc;
   --font-inter: 'Inter', system-ui, sans-serif;
-  --font-merriweather: 'Merriweather', Georgia, serif;
+  --font-serif: 'Newsreader', 'Merriweather', Georgia, serif;
+  --font-headline: 'Playfair Display', Georgia, serif;
+  --font-masthead: 'Cinzel', 'Playfair Display', Georgia, serif;
 }
 
 body {
@@ -21,57 +23,90 @@ body {
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0a0d14;
+  background: #090c10;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 4px;
+  background: #21262d;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #30363d;
+}
+
+/* Typography Helpers */
+.font-headline {
+  font-family: var(--font-headline);
+}
+
+.font-serif-body {
+  font-family: var(--font-serif);
+}
+
+.font-masthead {
+  font-family: var(--font-masthead);
+}
+
+/* Editorial Newspaper Aesthetics */
+.newspaper-masthead {
+  border-top: 3px double rgba(255, 255, 255, 0.25);
+  border-bottom: 3px double rgba(255, 255, 255, 0.25);
+}
+
+.newspaper-rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.15) 15%, rgba(255, 255, 255, 0.15) 85%, transparent 100%);
+}
+
+.newspaper-card {
+  background: rgba(15, 19, 26, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.newspaper-card:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.7), 0 0 20px -5px rgba(255, 255, 255, 0.05);
+}
+
+.editorial-tag {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.6875rem;
+  font-weight: 700;
 }
 
 /* Glassmorphic Components */
 .glass-card {
-  background: rgba(17, 22, 34, 0.75);
+  background: rgba(15, 19, 26, 0.8);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.09);
 }
 
 .glass-card-hover {
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .glass-card-hover:hover {
-  background: rgba(22, 29, 45, 0.85);
-  border-color: rgba(99, 102, 241, 0.3);
+  background: rgba(21, 27, 38, 0.9);
+  border-color: rgba(255, 255, 255, 0.25);
   transform: translateY(-2px);
-  box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.5), 0 0 20px -5px rgba(99, 102, 241, 0.15);
+  box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.6);
 }
 
 .glass-panel {
-  background: rgba(14, 18, 27, 0.9);
+  background: rgba(13, 17, 23, 0.95);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.gradient-editorial-text {
-  background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 50%, #94a3b8 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.gradient-accent-text {
-  background: linear-gradient(135deg, #a5b4fc 0%, #818cf8 50%, #c084fc 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}

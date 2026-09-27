@@ -4,13 +4,10 @@ import {
   TrendingUp,
   Clock,
   Layers,
-  Sparkles,
   ArrowUpRight,
-  ShieldAlert,
+  BookOpen,
 } from "lucide-react";
 import { Topic } from "@/lib/types";
-import { Card } from "../common/Card";
-import { Badge } from "../common/Badge";
 import { SourceBadge } from "../source/SourceBadge";
 import { formatTimeAgo } from "@/lib/utils";
 
@@ -30,27 +27,23 @@ export const TopicCard: React.FC<TopicCardProps> = ({ topic }) => {
 
   return (
     <Link href={`/topics/${topic.slug}`} className="block h-full group">
-      <Card
-        hover
-        className="h-full flex flex-col justify-between border-white/[0.07] hover:border-indigo-500/40"
-      >
-        <div className="space-y-3.5">
-          {/* Top Bar: Trending Gauge & Time */}
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold">
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span>Score: {trendingPercent}%</span>
-            </div>
+      <div className="h-full flex flex-col justify-between bg-[#0d1117] border border-white/10 hover:border-white/30 rounded-xl p-5 transition-all shadow-md hover:shadow-xl hover:-translate-y-0.5">
+        <div className="space-y-3">
+          {/* Top Bar: Dateline & Trending Score */}
+          <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] pb-2.5">
+            <span className="text-[11px] font-mono text-slate-400 flex items-center gap-1">
+              <Clock className="w-3 h-3 text-slate-500" />
+              {formatTimeAgo(topic.updated_at || topic.created_at)}
+            </span>
 
-            <span className="text-[11px] text-slate-500 flex items-center gap-1">
-              <Clock className="w-3 h-3" />
-              {formatTimeAgo(topic.updated_at)}
+            <span className="px-2 py-0.5 rounded bg-white/[0.06] border border-white/10 text-[10px] font-mono font-bold text-slate-300 uppercase">
+              {trendingPercent}% Velocity
             </span>
           </div>
 
-          {/* Topic Title */}
+          {/* Topic Title in Broadsheet Headline Typography */}
           <div>
-            <h3 className="text-base sm:text-lg font-bold text-slate-100 group-hover:text-indigo-300 transition-colors line-clamp-2 leading-snug">
+            <h3 className="font-headline text-lg sm:text-xl font-bold text-slate-100 group-hover:text-amber-200 transition-colors line-clamp-2 leading-snug">
               {topic.title}
             </h3>
           </div>
@@ -67,35 +60,36 @@ export const TopicCard: React.FC<TopicCardProps> = ({ topic }) => {
               <SourceBadge source="x" count={coverage.x} />
             )}
             {coverage.total_combined === 0 && (
-              <span className="text-xs text-slate-500 italic">
-                Ready for ingestion
+              <span className="text-xs font-serif-body text-slate-500 italic">
+                Awaiting initial ingestion
               </span>
             )}
           </div>
         </div>
 
-        {/* Bottom Footer: Perspectives & Arrow */}
-        <div className="mt-5 pt-3 border-t border-white/[0.05] flex items-center justify-between text-xs text-slate-400">
-          <div className="flex items-center gap-2">
+        {/* Bottom Footer: Perspectives Count & Read Link */}
+        <div className="mt-4 pt-3 border-t border-white/[0.06] flex items-center justify-between text-xs text-slate-400">
+          <div className="flex items-center gap-1.5">
             {perspectiveCount > 0 ? (
-              <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
-                <Sparkles className="w-3.5 h-3.5" />
-                {perspectiveCount} Perspectives Synthesized
+              <span className="font-medium text-slate-200">
+                <span className="text-amber-400 font-bold">{perspectiveCount}</span> Perspectives
               </span>
             ) : (
               <span className="text-slate-500">
                 {coverage.total_combined > 0
-                  ? "Awaiting Synthesis"
-                  : "New Candidate"}
+                  ? `${coverage.total_combined} Items Collected`
+                  : "Ready to Analyze"}
               </span>
             )}
           </div>
 
-          <span className="p-1 rounded-lg text-slate-400 group-hover:text-white group-hover:bg-indigo-600/20 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all">
-            <ArrowUpRight className="w-4 h-4" />
+          <span className="text-slate-300 group-hover:text-white flex items-center gap-1 text-xs font-semibold">
+            <span>Read Brief</span>
+            <ArrowUpRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
           </span>
         </div>
-      </Card>
+      </div>
     </Link>
   );
 };
+

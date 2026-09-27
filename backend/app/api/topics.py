@@ -427,3 +427,57 @@ def run_full_pipeline(
     finally:
         resource_governor.concurrency_governor.release("pipeline", holder_id=slug)
 
+
+@router.post(
+    "/submit-and-analyze",
+    status_code=status.HTTP_200_OK,
+    summary="Submit a topic and immediately execute automatic 100-item multi-source pipeline",
+)
+def submit_and_analyze_topic(
+    topic_in: TopicCreate,
+    limit_per_source: int = Query(default=100, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """Automatic topic submission endpoint: Creates or retrieves topic and executes the complete 100-item ingestion, deduplication, clustering, and perspective synthesis pipeline."""
+    _enforce_rate_limit("public:topic_create")
+    title_clean = topic_in.title.strip()
+    if not title_clean:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Topic title cannot be empty",
+        )
+
+    base_slug = topic_in.slug if topic_in.slug else generate_slug(title_clean)
+
+    # Check if a topic with this slug or title already exists
+    existing_topic = db.query(Topic).filter(
+        or_(Topic.slug == base_slug, Topic.title.ilike(title_clean))
+    ).first()
+
+    if existing_topic:
+        target_topic = existing_topic
+    else:
+        unique_slug = get_unique_slug(db, base_slug)
+        target_topic = Topic(
+            title=title_clean,
+            slug=unique_slug,
+            search_count=0,
+            trending_score=0.0,
+            source_coverage={
+                "google_news": 0,
+                "reddit": 0,
+                "x": 0,
+                "total_combined": 0,
+                "target_items": 100,
+            },
+            last_clustered_at=None,
+            updated_at=datetime.utcnow(),
+        )
+        db.add(target_topic)
+        db.commit()
+        db.refresh(target_topic)
+
+    # Automatically execute complete pipeline for this topic
+    return run_full_pipeline(slug=target_topic.slug, limit_per_source=limit_per_source, min_volume_threshold=5, db=db)
+
+
