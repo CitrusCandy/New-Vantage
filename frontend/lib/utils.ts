@@ -63,6 +63,36 @@ export function classifyStance(type: string): StanceCategory {
   return "neutral";
 }
 
+/** Canonical platform ID for evidence-source filters and badges. */
+export function normalizeEvidenceSource(source?: string | null, url?: string | null): string {
+  const value = (source ?? "").trim().toLowerCase();
+  const normalized = value.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+
+  let hostname = "";
+  try {
+    hostname = url ? new URL(url).hostname.toLowerCase() : "";
+  } catch {
+    // Keep using the source label when a legacy quote contains an invalid URL.
+  }
+
+  if (
+    normalized === "x" || normalized === "x com" || normalized.includes("twitter") || normalized.includes("nitter") ||
+    normalized.includes("tw1tter") || hostname === "x.com" || hostname.endsWith(".x.com") ||
+    hostname === "twitter.com" || hostname.endsWith(".twitter.com") ||
+    hostname.includes("nitter") || hostname.includes("tw1tter")
+  ) return "x";
+
+  if (normalized.includes("reddit") || hostname === "reddit.com" || hostname.endsWith(".reddit.com")) {
+    return "reddit";
+  }
+
+  if (normalized === "news" || normalized.includes("google") || normalized.includes("rss")) {
+    return "google_news";
+  }
+
+  return normalized || "unknown";
+}
+
 export function getStanceBadgeStyle(stance: StanceCategory | string): {
   bg: string;
   text: string;
@@ -129,8 +159,8 @@ export function getSourcePlatformMeta(source: string): {
   badgeBg: string;
   iconName: "news" | "reddit" | "x" | "globe";
 } {
-  const s = source.toLowerCase();
-  if (s.includes("google") || s.includes("news")) {
+  const s = normalizeEvidenceSource(source);
+  if (s === "google_news") {
     return {
       name: "Google News",
       color: "text-blue-400",
@@ -138,7 +168,7 @@ export function getSourcePlatformMeta(source: string): {
       iconName: "news",
     };
   }
-  if (s.includes("reddit")) {
+  if (s === "reddit") {
     return {
       name: "Reddit",
       color: "text-orange-400",
@@ -146,7 +176,7 @@ export function getSourcePlatformMeta(source: string): {
       iconName: "reddit",
     };
   }
-  if (s.includes("x") || s.includes("twitter")) {
+  if (s === "x") {
     return {
       name: "X (Twitter)",
       color: "text-zinc-200",

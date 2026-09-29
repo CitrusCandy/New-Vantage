@@ -40,6 +40,7 @@ class IngestionPipeline:
         limit_per_source: int = 100,
         per_source_timeout: float = 10.0,
         cancellation_token: Optional[CancellationToken] = None,
+        defer_x: bool = False,
     ) -> Dict[str, Any]:
         """Run all independent source scrapers concurrently into staging, then merge into combined_raw_data."""
         if cancellation_token:
@@ -95,8 +96,11 @@ class IngestionPipeline:
             tasks = [
                 ("google_news", lambda t, s: self.google_news_ingestor.fetch_and_stage(t, s, limit=clamped_limit, timeout_seconds=per_source_timeout)),
                 ("reddit", lambda t, s: self.reddit_ingestor.fetch_and_stage(t, s, limit=clamped_limit, timeout_seconds=per_source_timeout)),
-                ("x", lambda t, s: self.x_scraper.fetch_and_stage(t, s, limit=clamped_limit, timeout_seconds=per_source_timeout)),
             ]
+            if not defer_x:
+                tasks.append(("x", lambda t, s: self.x_scraper.fetch_and_stage(t, s, limit=clamped_limit, timeout_seconds=per_source_timeout)))
+            else:
+                staging_counts["x"] = 0
 
             max_workers = min(len(tasks), resource_governor.budget_manager.get_limit("max_concurrent_source_calls"))
             with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
@@ -132,7 +136,10 @@ class IngestionPipeline:
         for source_name in ["google_news", "reddit", "x"]:
             count = staging_counts.get(source_name, 0)
             err = staging_errors.get(source_name)
-            if err:
+            if source_name == "x" and defer_x:
+                status_label = "pending"
+                msg = "X/Twitter collection continues in the background"
+            elif err:
                 status_label = "failed"
                 msg = f"Failed: {err[:120]}"
             elif count > 0:
@@ -140,8 +147,12 @@ class IngestionPipeline:
                 msg = f"Successfully staged {count} items"
             else:
                 if source_name == "x" and not os.getenv("XQUIK_API_KEY"):
-                    status_label = "unconfigured"
-                    msg = "X provider credentials (XQUIK_API_KEY) not configured"
+                    if os.getenv("NITTER_ENABLED", "true").strip().lower() in ("0", "false", "no", "off"):
+                        status_label = "unconfigured"
+                        msg = "XQUIK_API_KEY is absent and Nitter fallback is disabled"
+                    else:
+                        status_label = "no_results"
+                        msg = "Nitter RSS fallback returned 0 items or available instances were rate limited"
                 elif source_name == "reddit" and not (os.getenv("REDDIT_CLIENT_ID") and os.getenv("REDDIT_CLIENT_SECRET")):
                     status_label = "public_fallback_empty"
                     msg = "Reddit public search returned 0 items or was rate limited"

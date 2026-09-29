@@ -138,6 +138,36 @@ class ClusterPipeline:
         clusters_payload: List[Dict[str, Any]] = []
         for cluster_id, size in sorted(cluster_result.cluster_sizes.items()):
             rep_indices = cluster_result.representative_indices.get(cluster_id, [])
+            member_indices = [
+                idx for idx, label in enumerate(cluster_result.labels)
+                if label == cluster_id
+            ]
+
+            # A centroid-only top three can omit a platform even when its
+            # posts belong to the cluster. Preserve one source example where
+            # available so synthesis and evidence filters can represent it.
+            representative_indices: List[int] = []
+            for source_name in ("x", "reddit", "google_news"):
+                source_candidates = [
+                    idx for idx in rep_indices
+                    if usable_items[idx].source == source_name
+                ]
+                if not source_candidates:
+                    source_candidates = [
+                        idx for idx in member_indices
+                        if usable_items[idx].source == source_name
+                    ]
+                if source_candidates:
+                    candidate = source_candidates[0]
+                    if candidate not in representative_indices:
+                        representative_indices.append(candidate)
+
+            for idx in rep_indices:
+                if idx not in representative_indices:
+                    representative_indices.append(idx)
+                if len(representative_indices) >= self.clusterer.n_representative_samples:
+                    break
+
             rep_samples = [
                 {
                     "raw_id": usable_items[idx].raw_id,
@@ -150,7 +180,7 @@ class ClusterPipeline:
                     if usable_items[idx].created_at
                     else None,
                 }
-                for idx in rep_indices
+                for idx in representative_indices[: self.clusterer.n_representative_samples]
             ]
 
             clusters_payload.append({

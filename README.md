@@ -4,6 +4,8 @@
 
 Vantage News aggregates public discourse across **Google News RSS**, **Reddit**, and **X (Twitter)**, eliminates bots and duplicates via MinHash/LSH, clusters viewpoints using HDBSCAN with normalized vector embeddings, and synthesizes structured, traceable perspectives using OpenAI models.
 
+X ingestion starts alongside Google News and Reddit, uses Xquik when `XQUIK_API_KEY` is configured, and falls back to rotating Nitter RSS instances. A slow Nitter sweep continues in the backend for up to 120 seconds; the result page shows staged posts and refreshes its analysis when they are merged. See [docs/deployment.md](docs/deployment.md) for settings.
+
 ---
 
 ## Architecture Overview
@@ -146,7 +148,8 @@ Services will be accessible at:
 - `GET /api/topics/trending` — Top viral topics ranked via multi-source velocity, reach, and time decay.
 - `POST /api/topics` — Create topic query.
 - `GET /api/topics/{slug}` — Retrieve topic and its synthesized perspectives.
-- `POST /api/topics/{slug}/run-pipeline` — Execute full end-to-end flow: Ingestion $\rightarrow$ Staging $\rightarrow$ Merge $\rightarrow$ HDBSCAN Clustering $\rightarrow$ LLM Synthesis.
+- `GET /api/topics/{slug}/ingestion-status` — Read live X/Nitter ingestion and analysis progress.
+- `POST /api/topics/{slug}/run-pipeline` — Return the Google News/Reddit result while X/Nitter enrichment runs in the background.
 - `GET /api/ops/overview` — High-level operational health, incident readiness timestamps, and alert counts.
 - `GET /api/ops/alerts` — Active alerts, severity (`info`, `warning`, `critical`), occurrence counts, and resolved history.
 - `GET /api/ops/history` — Query historical operational audit logs with filtering (`type`, `component`, `status`, `topic_slug`, `start_time`, `end_time`) and bounded pagination.

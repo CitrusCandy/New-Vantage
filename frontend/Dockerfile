@@ -12,6 +12,11 @@ RUN npm ci
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Next.js writes rewrites into the build output, so the backend's container
+# address must be available while the frontend is built.
+ARG INTERNAL_API_URL=http://backend:8000
+ENV INTERNAL_API_URL=${INTERNAL_API_URL}
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
@@ -25,10 +30,14 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 
+# Also provide the service address to server-side API calls at runtime.
+ARG INTERNAL_API_URL=http://backend:8000
+
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
-    HOSTNAME="0.0.0.0"
+    HOSTNAME="0.0.0.0" \
+    INTERNAL_API_URL=${INTERNAL_API_URL}
 
 # Create non-root user
 RUN addgroup --system --gid 1001 nodejs && \

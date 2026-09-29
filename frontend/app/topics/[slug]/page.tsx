@@ -24,9 +24,9 @@ import { PerspectiveFilter } from "@/components/perspective/PerspectiveFilter";
 import { ShareBarChart } from "@/components/charts/ShareBarChart";
 import { SourceBreakdown } from "@/components/source/SourceBreakdown";
 import { Spinner } from "@/components/common/Spinner";
-import { getTopicBySlug, triggerFullPipeline } from "@/lib/api";
+import { getTopicBySlug, getTopicIngestionStatus, triggerFullPipeline } from "@/lib/api";
 import { Perspective, Topic } from "@/lib/types";
-import { classifyStance, formatTimeAgo } from "@/lib/utils";
+import { classifyStance, formatTimeAgo, normalizeEvidenceSource } from "@/lib/utils";
 
 export default function TopicDetailPage() {
   const params = useParams();
@@ -60,6 +60,7 @@ export default function TopicDetailPage() {
         shouldAutoAnalyze &&
         (!data.perspectives || data.perspectives.length === 0) &&
         !data.last_clustered_at &&
+        data.source_coverage?.pipeline_status !== "complete" &&
         !hasAutoStartedRef.current
       ) {
         hasAutoStartedRef.current = true;
@@ -76,6 +77,70 @@ export default function TopicDetailPage() {
   useEffect(() => {
     fetchTopicData(true);
   }, [slug]);
+
+  const xIngestionStatus = topic?.source_coverage?.x_ingestion_status;
+  const xAnalysisStatus = topic?.source_coverage?.x_analysis_status;
+
+  useEffect(() => {
+    if (!slug) return;
+    const ingestionActive = ["pending", "running", "ready", "merging"].includes(xIngestionStatus || "");
+    const analysisActive = ["pending", "running"].includes(xAnalysisStatus || "");
+    if (!ingestionActive && !analysisActive) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const pollStatus = async () => {
+      try {
+        const progress = await getTopicIngestionStatus(slug);
+        if (cancelled) return;
+
+        const ingestionFinished = ["complete", "failed"].includes(progress.x_status);
+        const analysisFinished = ["complete", "failed", "skipped"].includes(progress.analysis_status);
+        if (ingestionFinished && analysisFinished) {
+          const refreshed = await getTopicBySlug(slug);
+          if (!cancelled) {
+            setTopic({
+              ...refreshed,
+              source_coverage: {
+                ...refreshed.source_coverage,
+                x_ingestion_status: progress.x_status,
+                x_analysis_status: progress.analysis_status,
+                x_ingestion_new_count: progress.x_new_count,
+                x_ingestion_baseline_coverage: progress.x_baseline_coverage,
+                x_ingestion_message: progress.message,
+                x_ingestion_posts: progress.x_posts,
+              },
+            });
+          }
+          return;
+        }
+
+        // Keep the loading state active while updating the visible X count and
+        // the newest staged posts on each poll.
+        setTopic((current) => current ? {
+          ...current,
+          source_coverage: {
+            ...current.source_coverage,
+            x_ingestion_new_count: progress.x_new_count,
+            x_ingestion_baseline_coverage: progress.x_baseline_coverage,
+            x_ingestion_message: progress.message,
+            x_ingestion_posts: progress.x_posts,
+          },
+        } : current);
+      } catch (pollError) {
+        console.warn("Could not refresh X/Twitter ingestion progress:", pollError);
+      }
+
+      if (!cancelled) timer = setTimeout(pollStatus, 2500);
+    };
+
+    void pollStatus();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [slug, xIngestionStatus, xAnalysisStatus]);
 
   const handleRunAutoAnalysis = async (targetTopic?: Topic) => {
     const activeTopic = targetTopic || topic;
@@ -103,21 +168,33 @@ export default function TopicDetailPage() {
 
   const realPerspectives = topic?.perspectives || [];
 
-  const perspectivesList = useMemo(() => {
-    return realPerspectives.filter((p) => {
-      if (selectedStance !== "all") {
-        const category = classifyStance(p.stance || p.perspective_type);
-        if (category !== selectedStance) return false;
-      }
-      if (selectedSource !== "all") {
-        const hasSource = p.sample_quotes?.some(
-          (q) => q.source.toLowerCase() === selectedSource.toLowerCase()
-        );
-        if (!hasSource) return false;
-      }
-      return true;
-    });
-  }, [realPerspectives, selectedStance, selectedSource]);
+  const stanceFilteredPerspectives = useMemo(() => realPerspectives.filter((p) => {
+    if (selectedStance === "all") return true;
+    return classifyStance(p.stance || p.perspective_type) === selectedStance;
+  }), [realPerspectives, selectedStance]);
+
+  const sourceFilteredPerspectives = useMemo(() => {
+    if (selectedSource === "all") return stanceFilteredPerspectives;
+    return stanceFilteredPerspectives.filter((p) => p.sample_quotes?.some(
+      (q) => normalizeEvidenceSource(q.source, q.url) === selectedSource
+    ));
+  }, [stanceFilteredPerspectives, selectedSource]);
+
+  // Older or sparse analyses may not have source-attributed X quotes even
+  // though the page has fetched X posts. Keep viewpoints visible and explain
+  // why the evidence filter could not narrow them.
+  const sourceFilterHasNoMatches = selectedSource !== "all" &&
+    sourceFilteredPerspectives.length === 0 && stanceFilteredPerspectives.length > 0;
+  const selectedSourceLabel = selectedSource === "google_news"
+    ? "Google News"
+    : selectedSource === "reddit"
+      ? "Reddit"
+      : selectedSource === "x"
+        ? "X"
+        : selectedSource;
+  const perspectivesList = sourceFilterHasNoMatches
+    ? stanceFilteredPerspectives
+    : sourceFilteredPerspectives;
 
   const totalShareSum = useMemo(() => {
     return realPerspectives.reduce((acc, p) => acc + p.estimated_share, 0) || 1.0;
@@ -277,16 +354,23 @@ export default function TopicDetailPage() {
               </div>
 
               {perspectivesList.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {perspectivesList.map((perspective) => (
-                    <PerspectiveCard
-                      key={perspective.id}
-                      perspective={perspective}
-                      totalShareSum={totalShareSum}
-                      highlighted={selectedPerspectiveId === perspective.id}
-                    />
-                  ))}
-                </div>
+                <>
+                  {sourceFilterHasNoMatches && (
+                    <p className="rounded-lg border border-amber-400/20 bg-amber-400/[0.06] px-4 py-3 text-xs text-amber-100/80">
+                      No identified viewpoint has a directly linked quote from {selectedSourceLabel} yet. Showing the viewpoints from the full analysis.
+                    </p>
+                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {perspectivesList.map((perspective) => (
+                      <PerspectiveCard
+                        key={perspective.id}
+                        perspective={perspective}
+                        totalShareSum={totalShareSum}
+                        highlighted={selectedPerspectiveId === perspective.id}
+                      />
+                    ))}
+                  </div>
+                </>
               ) : (
                 <div className="bg-[#0d1117] border border-white/10 rounded-xl p-10 text-center space-y-3">
                   <p className="font-serif-body text-sm text-slate-300">

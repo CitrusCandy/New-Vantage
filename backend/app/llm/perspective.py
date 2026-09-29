@@ -55,7 +55,7 @@ Instructions:
    - "summary": A concise 1-2 sentence core takeaway.
    - "estimated_share": Estimated discourse share (0.0 to 1.0) based on cluster proportions.
    - "key_arguments": 2 to 4 concrete supporting arguments directly grounded in the cluster's text.
-   - "sample_quotes": 1 to 3 representative verbatim quotes with authentic source and URL from the input data.
+   - "sample_quotes": 1 to 3 representative verbatim quotes with authentic source and URL from the input data. When a cluster includes multiple platforms, include an X or Reddit quote when present so each platform's evidence can be traced in the result.
 6. When the evidence is limited, sparse, or mixed, candidly describe the scope of evidence in "description" and "confidence_note". Never fabricate claims, sources, or quotes.
 7. Output MUST be valid JSON adhering strictly to the required schema:
 {
@@ -250,6 +250,18 @@ def validate_and_sanitize_perspectives(
         # 1. Sanitize quote URLs
         for q in p.sample_quotes:
             q.url = sanitize_url(q.url)
+            source = (q.source or "").strip().lower().replace("_", " ").replace("-", " ")
+            url = (q.url or "").lower()
+            if (
+                source == "x" or "twitter" in source or "nitter" in source or
+                "tw1tter" in source or "x.com/" in url or "twitter.com/" in url or
+                "nitter" in url or "tw1tter" in url
+            ):
+                q.source = "x"
+            elif "reddit" in source or "reddit.com/" in url:
+                q.source = "reddit"
+            elif source == "news" or "google" in source or "rss" in source:
+                q.source = "google_news"
 
         # 2. Derive & clean title, stance, description
         cand_title = p.title or p.heading or p.type

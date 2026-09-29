@@ -12,6 +12,7 @@ import {
   TopicCreate,
   WorkerStatus,
 } from "./types";
+import { normalizeEvidenceSource } from "./utils";
 
 export function getApiBaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_API_URL;
@@ -157,7 +158,7 @@ export async function getTopicBySlug(slug: string): Promise<Topic> {
         key_arguments: p.key_arguments ?? sp.key_arguments ?? (Array.isArray(p.summary_points) ? p.summary_points : []) ?? [],
         sample_quotes: (p.sample_quotes ?? []).map((q: any) => ({
           quote: q.quote ?? q.text ?? "",
-          source: q.source ?? "news",
+          source: normalizeEvidenceSource(q.source ?? "news", q.url),
           author_handle: q.author_handle,
           url: q.url,
           engagement: q.engagement ?? q.engagement_metrics,
@@ -168,6 +169,22 @@ export async function getTopicBySlug(slug: string): Promise<Topic> {
     });
   }
   return data;
+}
+
+export interface TopicIngestionStatus {
+  topic_slug: string;
+  x_status: string;
+  analysis_status: string;
+  x_new_count: number;
+  x_merged_count: number;
+  x_baseline_coverage: number;
+  x_posts: Array<{ tweet_id?: string | null; handle?: string | null; text: string; posted_at?: string | null }>;
+  message: string;
+  updated_at?: string | null;
+}
+
+export async function getTopicIngestionStatus(slug: string): Promise<TopicIngestionStatus> {
+  return fetchJson<TopicIngestionStatus>(`/topics/${encodeURIComponent(slug)}/ingestion-status`);
 }
 
 export async function createTopic(data: TopicCreate): Promise<Topic> {

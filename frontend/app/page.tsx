@@ -72,10 +72,10 @@ export default function HomePage() {
 
     setIsSubmitting(true);
     setErrorMessage(null);
-    setAnalysisStatus("Submitting topic and collecting 100+ source items across Google News & Reddit...");
+    setAnalysisStatus("Fetching Google News and Reddit RSS first; X/Twitter will keep loading in the background...");
 
     try {
-      setAnalysisStatus("Querying news feeds and discussion threads across sources...");
+      setAnalysisStatus("Collecting the first result from Google News and Reddit RSS. Nitter will continue checking X/Twitter instances after the result opens.");
       const res = await submitTopicAndAnalyze(trimmed, 100);
       const slug = res?.topic?.slug;
 
