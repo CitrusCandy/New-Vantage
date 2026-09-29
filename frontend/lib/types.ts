@@ -5,6 +5,20 @@ export interface SourceCoverage {
   total_combined: number;
   target_items?: number;
   target_met?: boolean;
+  pipeline_status?: string;
+  x_ingestion_status?: string;
+  x_analysis_status?: string;
+  x_ingestion_new_count?: number;
+  x_ingestion_baseline_coverage?: number;
+  x_ingestion_message?: string;
+  x_ingestion_posts?: XIngestionPost[];
+}
+
+export interface XIngestionPost {
+  tweet_id?: string | null;
+  handle?: string | null;
+  text: string;
+  posted_at?: string | null;
 }
 
 export interface SampleQuote {

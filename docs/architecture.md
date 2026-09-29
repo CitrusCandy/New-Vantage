@@ -33,7 +33,7 @@ X ────────────┘
 1. **Independent Scrapers & Staging Layer**:
    - **Google News RSS**: Parsed via `feedparser` into `raw_google_news` (`title`, `link`, `source_name`, `published_at`, `snippet`, `slug_id`).
    - **Reddit**: Ingested via official PRAW / REST endpoints into `raw_reddit` (`post_id`, `body`, `score`, `num_comments`, `subreddit`, `author`, `created_utc`, `slug_id`).
-   - **X (Twitter)**: Scraped with fail-soft isolation into `raw_x` (`tweet_id`, `text`, `likes`, `retweets`, `replies`, `handle`, `posted_at`, `slug_id`).
+   - **X (Twitter)**: Starts alongside Google News and Reddit, tries Xquik first when configured, then searches Nitter-compatible RSS instances in a rotating fallback order. The initial response waits for Google News and Reddit but not a slow X fallback. Nitter can continue for up to 120 seconds, commits successful instance results incrementally to `raw_x`, then merges and refreshes the topic's analysis. The topic page reads live progress from `/api/topics/{slug}/ingestion-status`.
    - **Failure Isolation**: Individual scraper rate-limits or network failures never impact other sources.
 
 2. **Merge & Normalization ETL**:

@@ -1,19 +1,21 @@
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from threading import Event, Lock
+from typing import Any, Dict, List, Optional, Set
 import unicodedata
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit_event
 from app.core import resource_governor
 from app.core.security import SecurityRole, require_operator, sanitize_search_query, validate_slug
-from app.database.database import get_db
-from app.database.models import Topic
+from app.database.database import SessionLocal, get_db
+from app.database.models import RawX, Topic
 from app.database.schemas import (
     TopicCreate,
     TopicDetailResponse,
@@ -22,12 +24,213 @@ from app.database.schemas import (
 )
 from app.ingestion.merge_pipeline import MergePipeline
 from app.ingestion.pipeline import IngestionPipeline
+from app.ingestion.x import XScraper
 from app.llm.pipeline import PerspectivePipeline
 from app.processing.cluster_pipeline import ClusterPipeline
 
 logger = logging.getLogger("app.api.topics")
 
 router = APIRouter(prefix="/topics", tags=["Topics"])
+_x_background_jobs_lock = Lock()
+_active_x_background_jobs: Set[int] = set()
+_x_background_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vantage-x-enrichment")
+
+
+def _update_x_job_state(
+    db: Session,
+    topic: Topic,
+    *,
+    ingestion_status: Optional[str] = None,
+    analysis_status: Optional[str] = None,
+    message: Optional[str] = None,
+) -> None:
+    current_topic = (
+        db.query(Topic)
+        .populate_existing()
+        .with_for_update()
+        .filter(Topic.id == topic.id)
+        .first()
+    )
+    if not current_topic:
+        return
+
+    coverage = dict(current_topic.source_coverage or {})
+    if ingestion_status is not None:
+        coverage["x_ingestion_status"] = ingestion_status
+    if analysis_status is not None:
+        coverage["x_analysis_status"] = analysis_status
+    if message is not None:
+        coverage["x_ingestion_message"] = message[:240]
+    coverage["x_ingestion_updated_at"] = datetime.utcnow().isoformat()
+    current_topic.source_coverage = coverage
+    db.add(current_topic)
+    db.commit()
+    db.refresh(current_topic)
+
+
+def _release_x_merge_gate(gate: Event) -> None:
+    """Let background X work merge only after the first result has been sent."""
+    gate.set()
+
+
+def _run_deferred_x_enrichment(
+    topic_id: int,
+    limit_per_source: int,
+    min_volume_threshold: int,
+    base_result_sent: Event,
+    fetch_finished: Event,
+) -> None:
+    """Fetch X concurrently, then merge and refresh after the first result is sent."""
+    db = SessionLocal()
+    fetch_error: Optional[Exception] = None
+    try:
+        topic = db.query(Topic).filter(Topic.id == topic_id).first()
+        if not topic:
+            fetch_finished.set()
+            base_result_sent.wait()
+            return
+
+        _update_x_job_state(
+            db,
+            topic,
+            ingestion_status="running",
+            analysis_status="pending",
+            message="Searching X/Twitter instances; new posts appear here as they are staged.",
+        )
+        request_recorded = False
+        try:
+            allowed, reason = resource_governor.external_governor.check_request_allowed("x")
+            if not allowed:
+                raise RuntimeError(f"X ingestion deferred by request governor: {reason}")
+            resource_governor.external_governor.record_request_start("x")
+            resource_governor.cost_tracker.record_external_request("x")
+            request_recorded = True
+            scraper = XScraper()
+            records = scraper.fetch_and_stage(
+                topic,
+                db,
+                limit=limit_per_source,
+                timeout_seconds=10.0,
+            )
+        except Exception as exc:
+            fetch_error = exc
+            records = []
+        finally:
+            if request_recorded:
+                try:
+                    resource_governor.external_governor.record_request_end("x")
+                except Exception:
+                    logger.debug("Could not close X external-request accounting", exc_info=True)
+            fetch_finished.set()
+
+        _update_x_job_state(
+            db,
+            topic,
+            ingestion_status="ready",
+            analysis_status="pending",
+            message=(
+                "X/Twitter data is staged and will be merged after the first result is sent."
+                if not fetch_error
+                else "X/Twitter request finished with an error; finalizing the first result."
+            ),
+        )
+        base_result_sent.wait()
+
+        if fetch_error:
+            raise fetch_error
+
+        baseline_raw_id = int((topic.source_coverage or {}).get("x_ingestion_baseline_raw_id", 0))
+        staged_count = db.query(RawX).filter(
+            RawX.slug_id == topic_id,
+            RawX.id > baseline_raw_id,
+        ).count()
+        if not records and staged_count == 0:
+            _update_x_job_state(
+                db,
+                topic,
+                ingestion_status="complete",
+                analysis_status="skipped",
+                message="X/Twitter search finished without additional posts.",
+            )
+            return
+
+        _update_x_job_state(
+            db,
+            topic,
+            ingestion_status="merging",
+            analysis_status="pending",
+            message=f"Staged {max(len(records), staged_count)} new X/Twitter posts; merging them into the result.",
+        )
+        merge_result = MergePipeline().merge_topic_staging_data(topic=topic, db=db)
+        topic = db.query(Topic).filter(Topic.id == topic_id).first()
+        added_x = (merge_result.get("source_breakdown") or {}).get("x", 0)
+        if not topic or not added_x:
+            if topic:
+                _update_x_job_state(
+                    db,
+                    topic,
+                    ingestion_status="complete",
+                    analysis_status="skipped",
+                    message="X/Twitter search finished; no new records needed analysis.",
+                )
+            return
+
+        _update_x_job_state(
+            db,
+            topic,
+            ingestion_status="complete",
+            analysis_status="running",
+            message=f"Added {added_x} X/Twitter posts; refreshing the perspectives.",
+        )
+        cluster_result = ClusterPipeline().run_for_topic(
+            topic=topic,
+            db=db,
+            min_volume_threshold=min_volume_threshold,
+        )
+        PerspectivePipeline().run_synthesis_for_topic(
+            topic=topic,
+            db=db,
+            min_volume_threshold=min_volume_threshold,
+            cluster_data=cluster_result,
+        )
+
+        from app.workers.trending import TrendingScorer
+
+        topic = db.query(Topic).filter(Topic.id == topic_id).first()
+        if topic:
+            score = TrendingScorer().calculate_topic_score(topic=topic, db=db)
+            topic.trending_score = score.final_score
+            db.commit()
+            db.refresh(topic)
+            _update_x_job_state(
+                db,
+                topic,
+                ingestion_status="complete",
+                analysis_status="complete",
+                message=f"X/Twitter enrichment finished with {added_x} new posts.",
+            )
+    except Exception as exc:
+        fetch_finished.set()
+        base_result_sent.wait()
+        db.rollback()
+        logger.exception("Deferred X/Twitter enrichment failed for topic ID %d", topic_id)
+        topic = db.query(Topic).filter(Topic.id == topic_id).first()
+        if topic:
+            try:
+                _update_x_job_state(
+                    db,
+                    topic,
+                    ingestion_status="failed",
+                    analysis_status="failed",
+                    message=f"X/Twitter enrichment failed: {exc}",
+                )
+            except Exception:
+                db.rollback()
+                logger.exception("Could not save X/Twitter failure status for topic ID %d", topic_id)
+    finally:
+        db.close()
+        with _x_background_jobs_lock:
+            _active_x_background_jobs.discard(topic_id)
 
 
 def _enforce_rate_limit(key: str):
@@ -176,6 +379,80 @@ def get_topic_by_slug(
             detail=f"Topic with slug '{slug}' not found",
         )
     return topic
+
+
+@router.get(
+    "/{slug}/ingestion-status",
+    summary="Get live source ingestion progress for a topic",
+)
+def get_topic_ingestion_status(
+    slug: str,
+    db: Session = Depends(get_db),
+):
+    """Return X staging progress while the deferred Nitter sweep is running."""
+    _enforce_rate_limit("public:topic_detail")
+    topic = db.query(Topic).filter(Topic.slug == slug).first()
+    if not topic:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Topic with slug '{slug}' not found",
+        )
+
+    coverage = dict(topic.source_coverage or {})
+    ingestion_status = coverage.get("x_ingestion_status", "complete")
+    analysis_status = coverage.get("x_analysis_status", "complete")
+    active_statuses = {"pending", "running", "ready", "merging"}
+    started_at = coverage.get("x_ingestion_started_at")
+    job_pending = ingestion_status in active_statuses or analysis_status in {"pending", "running"}
+    if job_pending and started_at:
+        try:
+            started = datetime.fromisoformat(started_at)
+            elapsed = (datetime.utcnow() - started).total_seconds()
+            with _x_background_jobs_lock:
+                job_is_active = topic.id in _active_x_background_jobs
+            if elapsed > 300 and not job_is_active:
+                if ingestion_status in active_statuses:
+                    ingestion_status = "failed"
+                analysis_status = "failed"
+                coverage["x_ingestion_status"] = ingestion_status
+                coverage["x_analysis_status"] = analysis_status
+                coverage["x_ingestion_message"] = "X/Twitter background work did not finish. Refresh analysis to retry."
+                topic.source_coverage = coverage
+                db.commit()
+        except (TypeError, ValueError):
+            pass
+
+    baseline_raw_id = int(coverage.get("x_ingestion_baseline_raw_id", 0))
+    new_count = db.query(RawX).filter(
+        RawX.slug_id == topic.id,
+        RawX.id > baseline_raw_id,
+    ).count()
+    new_posts = (
+        db.query(RawX)
+        .filter(RawX.slug_id == topic.id, RawX.id > baseline_raw_id)
+        .order_by(RawX.id.desc())
+        .limit(3)
+        .all()
+    )
+    return {
+        "topic_slug": topic.slug,
+        "x_status": ingestion_status,
+        "analysis_status": analysis_status,
+        "x_new_count": new_count,
+        "x_merged_count": int((topic.source_coverage or {}).get("x", 0)),
+        "x_baseline_coverage": int(coverage.get("x_ingestion_baseline_coverage", 0)),
+        "x_posts": [
+            {
+                "tweet_id": post.tweet_id,
+                "handle": post.handle,
+                "text": post.text[:500],
+                "posted_at": post.posted_at.isoformat() if post.posted_at else None,
+            }
+            for post in reversed(new_posts)
+        ],
+        "message": coverage.get("x_ingestion_message", ""),
+        "updated_at": coverage.get("x_ingestion_updated_at"),
+    }
 
 
 @router.patch(
@@ -365,15 +642,16 @@ def synthesize_topic_perspectives(
 @router.post(
     "/{slug}/run-pipeline",
     status_code=status.HTTP_200_OK,
-    summary="Execute complete end-to-end pipeline (Ingest -> Merge -> Cluster -> Synthesize)",
+    summary="Return news and Reddit analysis while X/Twitter enrichment continues in the background",
 )
 def run_full_pipeline(
     slug: str,
+    background_tasks: BackgroundTasks,
     limit_per_source: int = Query(default=100, ge=1, le=200),
     min_volume_threshold: int = Query(default=5, ge=2),
     db: Session = Depends(get_db),
 ):
-    """Execute complete end-to-end pipeline: Ingestion into staging -> Merge into combined_raw_data -> HDBSCAN clustering -> LLM synthesis."""
+    """Run the first analysis from news/Reddit and continue X enrichment asynchronously."""
     _enforce_rate_limit("public:pipeline")
     topic = db.query(Topic).filter(Topic.slug == slug).first()
     if not topic:
@@ -395,12 +673,89 @@ def run_full_pipeline(
 
     from app.core.telemetry import PipelineTimingTracker
     tracker = PipelineTimingTracker("end_to_end_pipeline", topic_slug=slug)
+    base_result_sent = Event()
+    fetch_finished = Event()
+    start_x_job = False
+    x_worker_submitted = False
+    x_job_start_error: Optional[str] = None
+    x_started_at: Optional[str] = None
+    baseline_raw_id = 0
+    baseline_x_coverage = int((topic.source_coverage or {}).get("x", 0))
+    prior_x_state = dict(topic.source_coverage or {})
 
     try:
+        # Start X immediately beside the Google News/Reddit work. The X worker
+        # may finish early and be included in the first merge; otherwise it
+        # continues independently while the initial result is prepared.
+        with _x_background_jobs_lock:
+            start_x_job = topic.id not in _active_x_background_jobs
+            if start_x_job:
+                _active_x_background_jobs.add(topic.id)
+
+        if start_x_job:
+            baseline_raw_id = db.query(func.max(RawX.id)).filter(RawX.slug_id == topic.id).scalar() or 0
+            x_started_at = datetime.utcnow().isoformat()
+            coverage = dict(topic.source_coverage or {})
+            coverage.update({
+                "x_ingestion_status": "pending",
+                "x_analysis_status": "pending",
+                "x_ingestion_message": "X/Twitter search started alongside Google News and Reddit RSS.",
+                "x_ingestion_started_at": x_started_at,
+                "x_ingestion_updated_at": x_started_at,
+                "x_ingestion_baseline_raw_id": int(baseline_raw_id),
+                "x_ingestion_baseline_coverage": baseline_x_coverage,
+                "x_ingestion_new_count": 0,
+            })
+            topic.source_coverage = coverage
+            db.commit()
+            db.refresh(topic)
+            try:
+                _x_background_executor.submit(
+                    _run_deferred_x_enrichment,
+                    topic.id,
+                    clamped_limit,
+                    min_volume_threshold,
+                    base_result_sent,
+                    fetch_finished,
+                )
+                x_worker_submitted = True
+            except Exception as exc:
+                with _x_background_jobs_lock:
+                    _active_x_background_jobs.discard(topic.id)
+                fetch_finished.set()
+                base_result_sent.set()
+                x_job_start_error = str(exc)
+                _update_x_job_state(
+                    db,
+                    topic,
+                    ingestion_status="failed",
+                    analysis_status="failed",
+                    message=f"Could not start X/Twitter enrichment: {exc}",
+                )
+                start_x_job = False
+
         # 1. Ingest & Merge
         with tracker.track("ingestion_and_merge"):
             ingestion_pipeline = IngestionPipeline()
-            ingestion_res = ingestion_pipeline.run(topic=topic, db=db, limit_per_source=clamped_limit)
+            ingestion_res = ingestion_pipeline.run(
+                topic=topic,
+                db=db,
+                limit_per_source=clamped_limit,
+                defer_x=True,
+            )
+
+        # If Nitter finished before the news/Reddit merge, those posts are
+        # already part of the first result and should be reported as such.
+        initial_x_added = (ingestion_res.get("merge_result", {}).get("source_breakdown") or {}).get("x", 0)
+        if initial_x_added:
+            ingestion_res["staging_counts"]["x"] = initial_x_added
+            ingestion_res["total_staged"] = sum(ingestion_res["staging_counts"].values())
+            ingestion_res["provider_diagnostics"]["x"] = {
+                "source": "x",
+                "status": "success",
+                "records_staged": initial_x_added,
+                "message": f"Successfully staged {initial_x_added} X/Twitter posts before the first result",
+            }
 
         # 2. HDBSCAN Cluster
         with tracker.track("hdbscan_clustering"):
@@ -434,6 +789,58 @@ def run_full_pipeline(
 
         timings_summary = tracker.finish(status="success")
 
+        # Publish the news/Reddit result now. X collection continues after the
+        # response if it was not already included in the initial merge.
+        coverage = dict(topic.source_coverage or {})
+        coverage["pipeline_status"] = "complete"
+        if start_x_job:
+            x_fetch_ready = fetch_finished.is_set()
+            coverage.update({
+                "x_ingestion_status": "ready" if x_fetch_ready else "running",
+                "x_analysis_status": "pending",
+                "x_ingestion_message": (
+                    "X/Twitter requests finished; finalizing the first result."
+                    if x_fetch_ready
+                    else "News and Reddit are ready; X/Twitter instance checks are continuing live."
+                ),
+                "x_ingestion_started_at": x_started_at,
+                "x_ingestion_updated_at": datetime.utcnow().isoformat(),
+                "x_ingestion_baseline_raw_id": int(baseline_raw_id),
+                "x_ingestion_baseline_coverage": baseline_x_coverage,
+                "x_ingestion_new_count": 0,
+            })
+        elif x_job_start_error:
+            coverage.update({
+                "x_ingestion_status": "failed",
+                "x_analysis_status": "failed",
+                "x_ingestion_message": f"Could not start X/Twitter enrichment: {x_job_start_error}"[:240],
+            })
+        else:
+            for key in (
+                "x_ingestion_status",
+                "x_analysis_status",
+                "x_ingestion_message",
+                "x_ingestion_started_at",
+                "x_ingestion_updated_at",
+                "x_ingestion_baseline_raw_id",
+                "x_ingestion_baseline_coverage",
+            ):
+                if key in prior_x_state:
+                    coverage[key] = prior_x_state[key]
+            if not coverage.get("x_ingestion_status"):
+                coverage.update({
+                    "x_ingestion_status": "running",
+                    "x_analysis_status": "running",
+                    "x_ingestion_message": "X/Twitter enrichment for this topic is already running.",
+                })
+        coverage["pipeline_status"] = "complete"
+        topic.source_coverage = coverage
+        db.commit()
+        db.refresh(topic)
+
+        if start_x_job:
+            background_tasks.add_task(_release_x_merge_gate, base_result_sent)
+
         return {
             "status": "success",
             "topic": {
@@ -450,6 +857,11 @@ def run_full_pipeline(
             "timings": timings_summary,
         }
     except Exception:
+        base_result_sent.set()
+        if start_x_job and not x_worker_submitted:
+            fetch_finished.set()
+            with _x_background_jobs_lock:
+                _active_x_background_jobs.discard(topic.id)
         tracker.finish(status="failed")
         raise
     finally:
@@ -463,6 +875,7 @@ def run_full_pipeline(
 )
 def submit_and_analyze_topic(
     topic_in: TopicCreate,
+    background_tasks: BackgroundTasks,
     limit_per_source: int = Query(default=100, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
@@ -506,6 +919,12 @@ def submit_and_analyze_topic(
         db.refresh(target_topic)
 
     # Automatically execute complete pipeline for this topic
-    return run_full_pipeline(slug=target_topic.slug, limit_per_source=limit_per_source, min_volume_threshold=5, db=db)
+    return run_full_pipeline(
+        slug=target_topic.slug,
+        limit_per_source=limit_per_source,
+        min_volume_threshold=5,
+        background_tasks=background_tasks,
+        db=db,
+    )
 
 

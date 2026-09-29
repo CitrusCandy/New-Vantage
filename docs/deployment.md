@@ -88,12 +88,30 @@ Create `.env` in the project root on your production host (or configure via your
 | `REDDIT_CLIENT_ID` | Optional | *\<id\>* | Reddit API Client ID |
 | `REDDIT_CLIENT_SECRET` | Optional | *\<secret\>* | Reddit API Client Secret |
 | `REDDIT_USER_AGENT` | Optional | `VantageNews/2.0.0` | Reddit custom user agent |
+| `XQUIK_API_KEY` | Optional | *\<key\>* | Primary X search provider key; Nitter RSS is tried as a fallback |
+| `XQUIK_BASE_URL` | Optional | `https://xquik.com/api/v1` | Xquik API base URL |
+| `NITTER_ENABLED` | Optional | `true` | Enable Nitter RSS scraping when Xquik is unavailable or returns no posts |
+| `NITTER_INSTANCES` | Optional | Built-in instance list | Comma-separated instance base URLs; overrides the built-in fallback list |
+| `NITTER_HTTP_PROXY` | Optional | Unset | HTTP proxy (for example, a local Tor HTTP bridge) for `.onion` instances |
+| `NITTER_MAX_INSTANCES` | Optional | `8` | Maximum instances checked per topic query, in rotating order |
+| `NITTER_MAX_SUCCESSFUL_INSTANCES` | Optional | `2` | Stop after this many instances return a valid feed |
+| `NITTER_MAX_RETRIES` | Optional | `1` | Retries per instance for transient network errors and server errors; rate limits and bot checks immediately fall through to the next instance |
+| `NITTER_REQUEST_TIMEOUT_SECONDS` | Optional | `8` | Per-request timeout, capped by the ingestion source timeout |
+| `NITTER_TOTAL_TIMEOUT_SECONDS` | Optional | `120` | Maximum background time spent checking Nitter instances for one topic (hard-capped at 120 seconds) |
+| `NITTER_BACKOFF_BASE_SECONDS` | Optional | `1` | Initial delay before retrying transient network/server errors, with jitter |
+| `NITTER_BACKOFF_MAX_SECONDS` | Optional | `2` | Maximum delay before a transient-error retry |
+| `NITTER_MAX_RETRY_AFTER_SECONDS` | Optional | `30` | Maximum `Retry-After` period stored as a per-instance cooldown; scraping moves to another instance immediately |
+| `NITTER_RATE_LIMIT_COOLDOWN_SECONDS` | Optional | `300` | Skip an instance for this long after HTTP 429 |
+| `NITTER_BOT_CHECK_COOLDOWN_SECONDS` | Optional | `900` | Skip an instance for this long after HTTP 403 or a detected bot wall |
+| `NITTER_FAILURE_COOLDOWN_SECONDS` | Optional | `60` | Skip an instance for this long after other failures |
+
+Topic analysis waits for Google News and Reddit RSS, then returns the initial result while X/Twitter scraping runs alongside that work and may continue for up to 120 seconds. The topic page polls `GET /api/topics/{slug}/ingestion-status`, displays posts as Nitter stages them, and refreshes perspectives after the final X merge.
 
 ### 3.4 Frontend
 | Variable Name | Required | Default / Example | Purpose |
 | :--- | :--- | :--- | :--- |
 | `NEXT_PUBLIC_API_URL` | Yes | `https://vantage.yourdomain.com/api` (or `/api`) | Public API endpoint for browser calls |
-| `INTERNAL_API_URL` | No | `http://backend:8000` | Internal network endpoint for Next.js SSR |
+| `INTERNAL_API_URL` | No | `http://backend:8000` | Internal network endpoint for Next.js SSR and the `/api` rewrite; set during the Docker build and at runtime |
 
 ---
 

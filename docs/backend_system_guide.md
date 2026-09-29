@@ -74,9 +74,9 @@ flowchart TD
   - Collects public tweets, retweets, replies, and like metrics.
   - Writes directly to `raw_x`.
 * **Fault Isolation & Concurrency**:
-  - Orchestrated by **[`IngestionPipeline`](file:///c:/Chirag/Code/Source/VantageNews/backend/app/ingestion/pipeline.py)** using a `ThreadPoolExecutor`.
-  - Each scraper runs in an isolated thread with its own scoped database session (`SessionLocal`), preventing transaction lockups.
-  - If a single source fails or is rate-limited, remaining sources complete and merge without error.
+  - Google News and Reddit run through **[`IngestionPipeline`](file:///c:/Chirag/Code/Source/VantageNews/backend/app/ingestion/pipeline.py)** in isolated threads with scoped database sessions.
+  - X/Nitter starts alongside those sources in a separate background executor. The initial analysis does not wait for a slow Nitter instance sweep; the sweep can continue for up to 120 seconds and commits new X records per successful instance.
+  - After the first response is sent, X records are merged and clustering/synthesis refreshes. `GET /api/topics/{slug}/ingestion-status` exposes live counts and preview posts to the result page.
 
 ---
 
@@ -234,7 +234,7 @@ flowchart TD
 When a user or worker triggers `POST /api/topics/{slug}/run-pipeline`:
 
 1. **Governance Check**: Acquires a distributed concurrency slot via `concurrency_governor.acquire("pipeline", holder_id=slug)`. Rate limits are enforced.
-2. **Fan-Out Ingestion**: `IngestionPipeline` spawns worker threads to pull from Google News RSS, Reddit, and X into staging tables.
+2. **Fan-Out Ingestion**: Google News RSS and Reddit are fetched for the initial response; X fetching starts concurrently and may continue in the background for up to 120 seconds.
 3. **ETL Normalization**: `MergePipeline` deduplicates and stages records into `combined_raw_data`.
 4. **Preprocessing**: `DiscourseProcessor` executes `TextCleaner`, marks spam/bot content with `BotDetector`, and removes duplicate stories using `MinHashLSH`.
 5. **Volume Gating**: If usable items $\ge 30$, processing continues; otherwise halts with `insufficient_volume`.
@@ -242,4 +242,5 @@ When a user or worker triggers `POST /api/topics/{slug}/run-pipeline`:
 7. **HDBSCAN Clustering**: Clusters data points, isolates noise ($cluster = -1$), and selects representative centroid samples.
 8. **LLM Synthesis**: `PerspectivePipeline` formats cluster exemplars and prompts the LLM to extract viewpoint stances, key arguments, and sample quotes.
 9. **Trending Score Refresh**: `TrendingScorer` recalculates the topic's trending rank.
-10. **Telemetry & Slot Release**: Records stage latencies to `PipelineTimingTracker` and `pipeline_runs`, and releases concurrency slot in `finally` block.
+10. **X Enrichment**: After the initial response is sent, any X records not included in the first merge are merged and the topic is re-clustered and re-synthesized.
+11. **Telemetry & Slot Release**: Records stage latencies to `PipelineTimingTracker` and `pipeline_runs`, and releases concurrency slot in `finally` block.
